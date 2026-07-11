@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -26,10 +25,6 @@ import { PermissionsGuard } from '../rbac/guards/permissions.guard';
 import { StoreResolverService } from '../storefront/store-resolver.service';
 import { TenantGuard } from '../tenancy/guards/tenant.guard';
 import {
-  TogglePlatformPaymentMethodDto,
-  UpsertPlatformPaymentMethodDto,
-} from './dto/platform-payment-method.dto';
-import {
   StorefrontConfirmReceiptDto,
   StorefrontPresignReceiptDto,
 } from './dto/storefront-payment-receipt.dto';
@@ -38,45 +33,6 @@ import {
   UpdateStorePaymentMethodDto,
 } from './dto/store-payment-method.dto';
 import { PaymentMethodsService } from './payment-methods.service';
-
-@ApiTags('platform-payment-methods')
-@ApiBearerAuth()
-@Controller('platform/payment-methods')
-export class PlatformPaymentMethodsController {
-  constructor(private readonly service: PaymentMethodsService) {}
-
-  @Get()
-  async list() {
-    return this.service.listPlatform();
-  }
-
-  @Post()
-  async create(@Body() body: UpsertPlatformPaymentMethodDto) {
-    return this.service.createPlatform(body);
-  }
-
-  @Patch(':id')
-  async update(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: UpsertPlatformPaymentMethodDto,
-  ) {
-    return this.service.updatePlatform(id, body);
-  }
-
-  @Patch(':id/toggle')
-  async toggle(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: TogglePlatformPaymentMethodDto,
-  ) {
-    return this.service.togglePlatform(id, body.isEnabled);
-  }
-
-  @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
-    await this.service.deletePlatform(id);
-  }
-}
 
 @ApiTags('merchant-payment-methods')
 @ApiBearerAuth()

@@ -24,16 +24,6 @@ describe('notifications.gateway realtime routing', () => {
     assert.equal(socket.disconnected, false);
   });
 
-  it('joins platform sockets to platform rooms after live-session check', async () => {
-    const gateway = createGateway();
-    const socket = createSocket('platform-token');
-
-    await gateway.handleConnection(socket);
-
-    assert.deepEqual(socket.joinedRooms.sort(), ['platform', 'platform_user:admin-1']);
-    assert.equal(socket.disconnected, false);
-  });
-
   it('rejects invalid sockets', async () => {
     const gateway = createGateway();
     const socket = createSocket('bad-token');
@@ -101,18 +91,6 @@ function createGateway() {
           fullName: 'Customer',
         };
       }
-      if (token === 'platform-token' && options.secret === 'merchant-secret') {
-        return {
-          sub: 'admin-1',
-          sid: 'platform-session-1',
-          email: 'admin@example.com',
-          fullName: 'Admin',
-          mfaEnabled: false,
-          permissions: [],
-          roleCodes: ['super_admin'],
-          kind: 'platform_admin',
-        };
-      }
       throw new Error('invalid token');
     },
   };
@@ -125,22 +103,7 @@ function createGateway() {
     },
   };
 
-  const platformAuthRepository = {
-    async findSessionById(id) {
-      if (id !== 'platform-session-1') return null;
-      return {
-        admin_user_id: 'admin-1',
-        revoked_at: null,
-        expires_at: new Date(Date.now() + 60_000),
-      };
-    },
-    async findAdminById(id) {
-      if (id !== 'admin-1') return null;
-      return { status: 'active' };
-    },
-  };
-
-  return new NotificationsGateway(jwtService, configService, platformAuthRepository);
+  return new NotificationsGateway(jwtService, configService);
 }
 
 function createSocket(token) {

@@ -12,7 +12,6 @@ interface Queryable {
 export interface AuditLogInput {
   storeId: string | null;
   storeUserId: string | null;
-  platformAdminId?: string | null;
   customerId?: string | null;
   action: string;
   targetType?: string;
@@ -40,7 +39,6 @@ export class AuditService {
           actor_id,
           store_id,
           store_user_id,
-          platform_admin_id,
           customer_id,
           action,
           category,
@@ -53,7 +51,7 @@ export class AuditService {
           user_agent,
           request_id,
           metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
       `,
       [
         uuidv4(),
@@ -61,7 +59,6 @@ export class AuditService {
         this.resolveActorId(input),
         input.storeId,
         input.storeUserId,
-        input.platformAdminId ?? null,
         input.customerId ?? null,
         input.action,
         input.category ?? null,
@@ -79,9 +76,6 @@ export class AuditService {
   }
 
   private resolveActorType(input: AuditLogInput): string {
-    if (input.platformAdminId) {
-      return 'platform_admin';
-    }
     if (input.storeUserId) {
       return 'store_user';
     }
@@ -92,7 +86,7 @@ export class AuditService {
   }
 
   private resolveActorId(input: AuditLogInput): string | null {
-    return input.platformAdminId ?? input.storeUserId ?? input.customerId ?? null;
+    return input.storeUserId ?? input.customerId ?? null;
   }
 
   private resolveRequestId(metadata: Record<string, unknown> | undefined): string | null {

@@ -8,7 +8,6 @@ import rtlPlugin from 'stylis-plugin-rtl';
 import { App } from './App';
 import { enforceLatinDigitsInLocaleFormatting } from './lib/force-latin-digits';
 import { useLocalStorageState } from './lib/use-local-storage-state';
-import { DEFAULT_MARKETING_LOCALE, resolveMarketingLocale } from './features/marketing/marketing-content';
 import { MerchantAccessibilitySettings } from './features/accessibility/merchant-accessibility-settings';
 import { createAdminTheme } from './theme/theme';
 
@@ -25,13 +24,8 @@ document.body.setAttribute('dir', 'rtl');
 
 function Root() {
   const [themeMode, setThemeMode] = useLocalStorageState('admin.theme.mode.v1', 'light');
-  const [marketingLocaleValue, setMarketingLocale] = useLocalStorageState(
-    'admin.marketing.language.v1',
-    DEFAULT_MARKETING_LOCALE,
-  );
 
   const mode = themeMode === 'dark' ? 'dark' : 'light';
-  const marketingLocale = resolveMarketingLocale(marketingLocaleValue);
   const theme = useMemo(() => createAdminTheme(mode), [mode]);
 
   useEffect(() => {
@@ -80,9 +74,7 @@ function Root() {
         }}
       />
       <App
-        marketingLocale={marketingLocale}
         themeMode={mode}
-        onMarketingLocaleChange={setMarketingLocale}
         onThemeModeChange={setThemeMode}
       />
       <MerchantAccessibilitySettings />

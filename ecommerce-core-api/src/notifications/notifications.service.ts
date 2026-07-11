@@ -236,35 +236,6 @@ export class NotificationsService {
     };
   }
 
-  async listPlatformInbox(query: {
-    unreadOnly: boolean;
-    type?: string;
-    category?: MerchantNotificationCategory;
-    severity?: MerchantNotificationSeverity;
-    dateFrom?: Date;
-    dateTo?: Date;
-    page: number;
-    limit: number;
-  }): Promise<{ items: Record<string, unknown>[]; total: number; page: number; limit: number }> {
-    const result = await this.notificationsRepository.listInboxForPlatform({
-      unreadOnly: query.unreadOnly,
-      page: query.page,
-      limit: query.limit,
-      ...(query.type !== undefined ? { type: query.type } : {}),
-      ...(query.category !== undefined ? { category: query.category } : {}),
-      ...(query.severity !== undefined ? { severity: query.severity } : {}),
-      ...(query.dateFrom !== undefined ? { dateFrom: query.dateFrom } : {}),
-      ...(query.dateTo !== undefined ? { dateTo: query.dateTo } : {}),
-    });
-
-    return {
-      items: result.rows.map((item) => this.mapInbox(item)),
-      total: result.total,
-      page: query.page,
-      limit: query.limit,
-    };
-  }
-
   async countUnreadStoreNotifications(currentUser: AuthUser): Promise<{ count: number }> {
     return {
       count: await this.notificationsRepository.countUnreadForStore(
@@ -280,12 +251,6 @@ export class NotificationsService {
         customer.storeId,
         customer.id,
       ),
-    };
-  }
-
-  async countUnreadPlatformNotifications(): Promise<{ count: number }> {
-    return {
-      count: await this.notificationsRepository.countUnreadForPlatform(),
     };
   }
 
@@ -328,18 +293,6 @@ export class NotificationsService {
     });
   }
 
-  async markPlatformNotificationRead(notificationId: string): Promise<void> {
-    const updated = await this.notificationsRepository.markReadForPlatform(notificationId);
-    if (!updated) {
-      throw new NotFoundException('Notification not found');
-    }
-    await this.emitPlatformUnreadCount();
-    this.notificationsGateway.emitNotificationRead({
-      notificationId,
-      recipientType: 'store',
-    });
-  }
-
   async markAllStoreNotificationsRead(currentUser: AuthUser): Promise<{ updated: number }> {
     const updated = await this.notificationsRepository.markAllReadForStore(
       currentUser.storeId,
@@ -364,15 +317,6 @@ export class NotificationsService {
       recipientType: 'customer',
       storeId: customer.storeId,
       customerId: customer.id,
-    });
-    return { updated };
-  }
-
-  async markAllPlatformNotificationsRead(): Promise<{ updated: number }> {
-    const updated = await this.notificationsRepository.markAllReadForPlatform();
-    await this.emitPlatformUnreadCount();
-    this.notificationsGateway.emitNotificationRead({
-      recipientType: 'store',
     });
     return { updated };
   }
@@ -699,13 +643,6 @@ export class NotificationsService {
         customer.storeId,
         customer.id,
       ),
-    });
-  }
-
-  private async emitPlatformUnreadCount(): Promise<void> {
-    this.notificationsGateway.emitUnreadCount({
-      recipientType: 'store',
-      count: await this.notificationsRepository.countUnreadForPlatform(),
     });
   }
 

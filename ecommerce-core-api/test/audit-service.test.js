@@ -4,7 +4,7 @@ const { describe, it } = require('node:test');
 const { AuditService } = require('../dist/audit/audit.service');
 
 describe('AuditService INSERT statement', () => {
-  it('has 18 placeholders and sends valid JSONB for snapshot/metadata fields', async () => {
+  it('has 17 placeholders and sends valid JSONB for snapshot/metadata fields', async () => {
     let capturedQuery = '';
     let capturedValues = [];
 
@@ -27,8 +27,7 @@ describe('AuditService INSERT statement', () => {
       {
         storeId: null,
         storeUserId: null,
-        platformAdminId: 'admin-1',
-        action: 'platform.auth.login_succeeded',
+        action: 'auth.login_succeeded',
         beforeSnapshot,
         afterSnapshot,
         metadata,
@@ -36,25 +35,25 @@ describe('AuditService INSERT statement', () => {
       mockDb,
     );
 
-    // 1. Ensure there are 18 placeholders ($1 ... $18)
+    // 1. Ensure there are 17 placeholders ($1 ... $17)
     const placeholders = capturedQuery.match(/\$\d+/g) || [];
-    assert.equal(placeholders.length, 18, 'INSERT should have 18 placeholders');
-    assert.ok(placeholders.includes('$18'), 'Last placeholder should be $18');
+    assert.equal(placeholders.length, 17, 'INSERT should have 17 placeholders');
+    assert.ok(placeholders.includes('$17'), 'Last placeholder should be $17');
 
-    // 2. Ensure there are 18 values
-    assert.equal(capturedValues.length, 18, 'Should send exactly 18 values');
+    // 2. Ensure there are 17 values
+    assert.equal(capturedValues.length, 17, 'Should send exactly 17 values');
 
-    // 3. Ensure metadata is value #18
-    assert.deepStrictEqual(capturedValues[17], metadata, 'Value 18 should be metadata');
+    // 3. Ensure metadata is value #17
+    assert.deepStrictEqual(capturedValues[16], metadata, 'Value 17 should be metadata');
 
     // 4. Ensure before_snapshot and after_snapshot are sent as objects (JSONB-ready)
     assert.deepStrictEqual(
-      capturedValues[12],
+      capturedValues[11],
       beforeSnapshot,
       'before_snapshot should be the object',
     );
     assert.deepStrictEqual(
-      capturedValues[13],
+      capturedValues[12],
       afterSnapshot,
       'after_snapshot should be the object',
     );
@@ -81,9 +80,9 @@ describe('AuditService INSERT statement', () => {
       mockDb,
     );
 
-    assert.equal(capturedValues.length, 18);
-    assert.equal(capturedValues[12], null, 'before_snapshot should be null');
-    assert.equal(capturedValues[13], null, 'after_snapshot should be null');
-    assert.deepStrictEqual(capturedValues[17], {}, 'metadata should default to empty object');
+    assert.equal(capturedValues.length, 17);
+    assert.equal(capturedValues[11], null, 'before_snapshot should be null');
+    assert.equal(capturedValues[12], null, 'after_snapshot should be null');
+    assert.deepStrictEqual(capturedValues[16], {}, 'metadata should default to empty object');
   });
 });

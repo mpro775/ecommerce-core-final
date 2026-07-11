@@ -1,8 +1,6 @@
 import {
-  HomeRoundedIcon,
   LoginRoundedIcon,
   MenuRoundedIcon,
-  PersonAddAlt1RoundedIcon,
   StorefrontRoundedIcon,
 } from './components/icons';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
@@ -28,10 +26,7 @@ import {
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { MerchantLoginPage } from './features/auth/merchant-login-page';
-import { MerchantRegisterPage } from './features/auth/merchant-register-page';
 import { MerchantAcceptInvitePage } from './features/auth/merchant-accept-invite-page';
-import { MarketingHome } from './features/marketing/marketing-home';
-import type { MarketingLocale } from './features/marketing/marketing-content';
 import { MerchantDashboard } from './features/merchant/merchant-dashboard';
 import { MerchantOnboarding } from './features/merchant/merchant-onboarding';
 import { useMerchantSession } from './features/merchant/use-merchant-session';
@@ -55,7 +50,7 @@ const SKIP_LINK_SX = {
   textDecoration: 'none',
 };
 
-type AppRoute = 'marketing' | 'register' | 'login' | 'merchant' | 'acceptInvite';
+type AppRoute = 'login' | 'merchant' | 'acceptInvite';
 type ThemeMode = 'light' | 'dark';
 type ThemeRippleOrigin = { x: number; y: number };
 type ViewTransition = {
@@ -70,9 +65,7 @@ type ViewTransitionAnimationOptions = KeyframeAnimationOptions & {
 };
 
 interface AppProps {
-  marketingLocale: MarketingLocale;
   themeMode: ThemeMode;
-  onMarketingLocaleChange: (locale: MarketingLocale) => void;
   onThemeModeChange: (mode: ThemeMode) => void;
 }
 
@@ -85,30 +78,18 @@ function resolveRoute(pathname: string): AppRoute {
     return 'merchant';
   }
 
-  if (pathname === '/register') {
-    return 'register';
-  }
-
-  if (pathname === '/login') {
-    return 'login';
-  }
-
-  return 'marketing';
+  return 'login';
 }
 
 function resolvePath(route: AppRoute): string {
   switch (route) {
-    case 'register':
-      return '/register';
-    case 'login':
-      return '/login';
     case 'merchant':
       return '/merchant';
     case 'acceptInvite':
       return '/accept-invite';
-    case 'marketing':
+    case 'login':
     default:
-      return '/';
+      return '/login';
   }
 }
 
@@ -173,9 +154,7 @@ function animateThemeViewTransition(
 }
 
 export function App({
-  marketingLocale,
   themeMode,
-  onMarketingLocaleChange,
   onThemeModeChange,
 }: AppProps) {
   const theme = useTheme();
@@ -218,9 +197,6 @@ export function App({
     [onThemeModeChange, themeMode],
   );
 
-  const toggleMarketingLocale = useCallback((): void => {
-    onMarketingLocaleChange(marketingLocale === 'ar' ? 'en' : 'ar');
-  }, [marketingLocale, onMarketingLocaleChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -321,21 +297,15 @@ export function App({
       return;
     }
 
-    if ((route === 'login' || route === 'register' || route === 'acceptInvite') && session) {
+    if ((route === 'login' || route === 'acceptInvite') && session) {
       navigate('merchant', true);
     }
   }, [navigate, route, session]);
 
   const navigationItems = useMemo<Array<{ route: AppRoute; label: string; icon: ReactElement }>>(
     () => [
-      { route: 'marketing', label: 'الرئيسية', icon: <HomeRoundedIcon fontSize="small" /> },
-      {
-        route: 'register',
-        label: 'إنشاء حساب',
-        icon: <PersonAddAlt1RoundedIcon fontSize="small" />,
-      },
-      { route: 'login', label: 'دخول التاجر', icon: <LoginRoundedIcon fontSize="small" /> },
-      { route: 'merchant', label: 'لوحة التاجر', icon: <StorefrontRoundedIcon fontSize="small" /> },
+      { route: 'login', label: '???? ??????', icon: <LoginRoundedIcon fontSize="small" /> },
+      { route: 'merchant', label: '???? ??????', icon: <StorefrontRoundedIcon fontSize="small" /> },
     ],
     [],
   );
@@ -349,32 +319,6 @@ export function App({
   );
 
   function renderRouteContent(currentRoute: AppRoute, currentSession: MerchantSession | null) {
-    if (currentRoute === 'marketing') {
-      return (
-        <MarketingHome
-          locale={marketingLocale}
-          themeMode={themeMode}
-          onCreateAccount={() => navigate('register')}
-          onSignIn={() => navigate('login')}
-          onToggleLocale={toggleMarketingLocale}
-          onToggleThemeMode={toggleThemeMode}
-        />
-      );
-    }
-
-    if (currentRoute === 'register') {
-      return (
-        <MerchantRegisterPage
-          onBackHome={() => navigate('marketing')}
-          onSignIn={() => navigate('login')}
-          onRegistered={(nextSession) => {
-            setSession(nextSession);
-            navigate('merchant', true);
-          }}
-        />
-      );
-    }
-
     if (currentRoute === 'login') {
       return (
         <MerchantLoginPage
@@ -382,8 +326,7 @@ export function App({
             setSession(nextSession);
             navigate('merchant', true);
           }}
-          onBackHome={() => navigate('marketing')}
-          onCreateAccount={() => navigate('register')}
+          onBackHome={() => navigate('login')}
         />
       );
     }
@@ -395,7 +338,7 @@ export function App({
             setSession(nextSession);
             navigate('merchant', true);
           }}
-          onBackHome={() => navigate('marketing')}
+          onBackHome={() => navigate('login')}
           onSignIn={() => navigate('login')}
         />
       );
@@ -437,7 +380,7 @@ export function App({
 
   const activeShellIndex = shellItems.findIndex((item) => item.route === route);
   const isStandalonePage =
-    route === 'marketing' || route === 'register' || route === 'login' || route === 'acceptInvite';
+    route === 'login' || route === 'acceptInvite';
 
   if (route === 'merchant') {
     if (showOnboarding) {

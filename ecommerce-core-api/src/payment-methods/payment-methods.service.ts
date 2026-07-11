@@ -1,13 +1,11 @@
 import {
   BadRequestException,
-  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import type { PaymentMethodType } from './constants/payment-method.constants';
-import type { UpsertPlatformPaymentMethodDto } from './dto/platform-payment-method.dto';
 import type { UpdateStorePaymentMethodDto } from './dto/store-payment-method.dto';
 import {
   PaymentMethodsRepository,
@@ -84,64 +82,8 @@ export class PaymentMethodsService {
     private readonly mediaRepository: MediaRepository,
   ) {}
 
-  async listPlatform(): Promise<PlatformPaymentMethodResponse[]> {
-    const records = await this.repository.listPlatform(true);
-    return Promise.all(records.map((method) => this.mapPlatform(method)));
-  }
-
-  async createPlatform(
-    input: UpsertPlatformPaymentMethodDto,
-  ): Promise<PlatformPaymentMethodResponse> {
-    const normalized = this.normalizePlatformInput(input);
-    const existing = await this.repository.findPlatformByCode(normalized.code);
-    if (existing) {
-      throw new ConflictException('Payment method code already exists');
-    }
-    return await this.mapPlatform(await this.repository.createPlatform(normalized));
-  }
-
-  async updatePlatform(
-    id: string,
-    input: UpsertPlatformPaymentMethodDto,
-  ): Promise<PlatformPaymentMethodResponse> {
-    const current = await this.repository.findPlatformById(id);
-    if (!current) {
-      throw new NotFoundException('Payment method not found');
-    }
-    const normalized = this.normalizePlatformInput(input);
-    const byCode = await this.repository.findPlatformByCode(normalized.code);
-    if (byCode && byCode.id !== id) {
-      throw new ConflictException('Payment method code already exists');
-    }
-    const updated = await this.repository.updatePlatform(id, normalized);
-    if (!updated) {
-      throw new NotFoundException('Payment method not found');
-    }
-    return await this.mapPlatform(updated);
-  }
-
-  async togglePlatform(id: string, isEnabled: boolean): Promise<PlatformPaymentMethodResponse> {
-    const updated = await this.repository.togglePlatform(id, isEnabled);
-    if (!updated) {
-      throw new NotFoundException('Payment method not found');
-    }
-    return await this.mapPlatform(updated);
-  }
-
-  async deletePlatform(id: string): Promise<void> {
-    const current = await this.repository.findPlatformById(id);
-    if (!current) {
-      throw new NotFoundException('Payment method not found');
-    }
-    const usage = await this.repository.countPlatformUsage(id);
-    if (usage > 0) {
-      throw new BadRequestException('لا يمكن حذف طريقة دفع مستخدمة. يمكن تعطيلها بدلًا من حذفها.');
-    }
-    await this.repository.deletePlatform(id);
-  }
-
   async listAvailableForMerchant(): Promise<PlatformPaymentMethodResponse[]> {
-    const records = await this.repository.listPlatform(false);
+    const records = await this.repository.listBaseCatalog(false);
     return Promise.all(records.map((method) => this.mapPlatform(method)));
   }
 
@@ -295,29 +237,6 @@ export class PaymentMethodsService {
     if (!accountName?.trim() || !accountNumber?.trim()) {
       throw new BadRequestException('اسم الحساب ورقم الحساب مطلوبان لتفعيل طريقة الدفع هذه.');
     }
-  }
-
-  private normalizePlatformInput(input: UpsertPlatformPaymentMethodDto) {
-    const code = input.code.trim().toLowerCase().replace(/\s+/g, '_');
-    if (!/^[a-z0-9_:-]+$/u.test(code)) {
-      throw new BadRequestException(
-        'Payment method code may only contain letters, numbers, underscore, colon, or dash',
-      );
-    }
-    return {
-      code,
-      nameAr: input.nameAr.trim(),
-      nameEn: input.nameEn.trim(),
-      descriptionAr: input.descriptionAr?.trim() || null,
-      descriptionEn: input.descriptionEn?.trim() || null,
-      mediaAssetId: input.mediaAssetId?.trim() || null,
-      type: input.type,
-      requiresReference: input.requiresReference ?? input.type !== 'cod',
-      requiresReceipt: input.requiresReceipt ?? false,
-      isReceiptOptional: input.isReceiptOptional ?? true,
-      isEnabled: input.isEnabled ?? true,
-      sortOrder: input.sortOrder ?? 100,
-    };
   }
 
   private normalizeOptional(next: string | undefined, current: string | null): string | null {

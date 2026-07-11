@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import nodemailer, { type Transporter } from 'nodemailer';
 
-interface OwnerRegistrationOtpEmailInput {
+interface OtpEmailInput {
   to: string;
   fullName: string;
   otpCode: string;
@@ -48,7 +48,7 @@ export class EmailService {
 
   constructor(private readonly configService: ConfigService) {}
 
-  async sendOwnerRegistrationOtp(input: OwnerRegistrationOtpEmailInput): Promise<void> {
+  async sendOtpEmail(input: OtpEmailInput): Promise<void> {
     const mode = this.configService.get<string>('EMAIL_DELIVERY_MODE', 'log');
     const from = this.configService.get<string>('EMAIL_FROM', 'no-reply@ecommerce_core.store');
     const subject = 'رمز التحقق لتفعيل حسابك في النظام ستور';

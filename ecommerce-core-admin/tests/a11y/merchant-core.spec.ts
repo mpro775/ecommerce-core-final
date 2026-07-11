@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
-const publicPages = ['/', '/login', '/register'];
+const publicPages = ['/', '/login'];
 const merchantTabs = [
   { name: 'products', label: /المنتجات|Products/i },
   { name: 'orders', label: /الطلبات|Orders/i },

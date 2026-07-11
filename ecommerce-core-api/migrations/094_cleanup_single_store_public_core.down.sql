@@ -1,0 +1,2 @@
+-- Down migration not implemented as this permanently removes public registration,
+-- platform notification recipients, and store-deletion purge infrastructure.

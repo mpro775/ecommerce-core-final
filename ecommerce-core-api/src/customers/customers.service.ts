@@ -348,7 +348,7 @@ export class CustomersService {
       expiresAt,
     });
 
-    await this.emailService.sendOwnerRegistrationOtp({
+    await this.emailService.sendOtpEmail({
       to: email,
       fullName: customer.full_name,
       otpCode: token,

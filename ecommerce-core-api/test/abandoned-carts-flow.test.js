@@ -15,6 +15,7 @@ describe('abandoned carts recovery flow', () => {
     const db = {
       cart: {
         id: cartId,
+        cart_id: cartId,
         store_id: storeId,
         store_slug: 'demo',
         store_name: 'Demo',

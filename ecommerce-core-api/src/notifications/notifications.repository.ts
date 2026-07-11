@@ -347,99 +347,6 @@ export class NotificationsRepository {
     };
   }
 
-  async listInboxForPlatform(input: {
-    unreadOnly: boolean;
-    type?: string;
-    category?: MerchantNotificationCategory;
-    severity?: MerchantNotificationSeverity;
-    dateFrom?: Date;
-    dateTo?: Date;
-    page: number;
-    limit: number;
-  }): Promise<{ rows: NotificationInboxRecord[]; total: number }> {
-    const params: Array<string | number | Date> = [];
-    const where: string[] = ["recipient_type = 'platform'"];
-    let index = 1;
-
-    if (input.unreadOnly) {
-      where.push(`status = $${index++}`);
-      params.push('unread');
-    }
-
-    if (input.type?.trim()) {
-      where.push(`type = $${index++}`);
-      params.push(input.type.trim());
-    }
-
-    if (input.category) {
-      where.push(`category = $${index++}`);
-      params.push(input.category);
-    }
-
-    if (input.severity) {
-      where.push(`severity = $${index++}`);
-      params.push(input.severity);
-    }
-
-    if (input.dateFrom) {
-      where.push(`created_at >= $${index++}`);
-      params.push(input.dateFrom);
-    }
-
-    if (input.dateTo) {
-      where.push(`created_at <= $${index++}`);
-      params.push(input.dateTo);
-    }
-
-    const whereClause = where.join(' AND ');
-    const offset = (input.page - 1) * input.limit;
-
-    const rowsResult = await this.databaseService.db.query<NotificationInboxRecord>(
-      `
-        SELECT
-          id,
-          store_id,
-          recipient_type,
-          recipient_store_user_id,
-          recipient_customer_id,
-          recipient_label,
-          type,
-          category,
-          severity,
-          source,
-          dedupe_key,
-          expires_at,
-          title,
-          body,
-          status,
-          read_at,
-          action_url,
-          metadata,
-          created_at,
-          updated_at
-        FROM notifications
-        WHERE ${whereClause}
-        ORDER BY created_at DESC
-        LIMIT $${index} OFFSET $${index + 1}
-      `,
-      [...params, input.limit, offset],
-    );
-
-    const countResult = await this.databaseService.db.query<{ total: string }>(
-      `
-        SELECT COUNT(*)::text AS total
-        FROM notifications
-        WHERE ${whereClause}
-      `,
-      params,
-    );
-
-    return {
-      rows: rowsResult.rows,
-      total: Number(countResult.rows[0]?.total ?? '0'),
-    };
-  }
-
   async countUnreadForStore(storeId: string, storeUserId: string): Promise<number> {
     const result = await this.databaseService.db.query<{ total: string }>(
       `
@@ -500,19 +407,6 @@ export class NotificationsRepository {
           AND recipient_type = 'customer'
       `,
       [storeId, customerId],
-    );
-
-    return Number(result.rows[0]?.total ?? '0');
-  }
-
-  async countUnreadForPlatform(): Promise<number> {
-    const result = await this.databaseService.db.query<{ total: string }>(
-      `
-        SELECT COUNT(*)::text AS total
-        FROM notifications
-        WHERE recipient_type = 'platform'
-          AND status = 'unread'
-      `,
     );
 
     return Number(result.rows[0]?.total ?? '0');
@@ -597,37 +491,6 @@ export class NotificationsRepository {
           AND status = 'unread'
       `,
       [storeId, customerId],
-    );
-
-    return result.rowCount ?? 0;
-  }
-
-  async markReadForPlatform(notificationId: string): Promise<boolean> {
-    const result = await this.databaseService.db.query(
-      `
-        UPDATE notifications
-        SET status = 'read',
-            read_at = COALESCE(read_at, NOW()),
-            updated_at = NOW()
-        WHERE id = $1
-          AND recipient_type = 'platform'
-      `,
-      [notificationId],
-    );
-
-    return (result.rowCount ?? 0) > 0;
-  }
-
-  async markAllReadForPlatform(): Promise<number> {
-    const result = await this.databaseService.db.query(
-      `
-        UPDATE notifications
-        SET status = 'read',
-            read_at = COALESCE(read_at, NOW()),
-            updated_at = NOW()
-        WHERE recipient_type = 'platform'
-          AND status = 'unread'
-      `,
     );
 
     return result.rowCount ?? 0;

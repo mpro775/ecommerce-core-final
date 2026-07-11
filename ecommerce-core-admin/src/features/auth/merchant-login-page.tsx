@@ -5,7 +5,6 @@ import {
   NotificationsActiveOutlinedIcon,
   PaymentsIcon,
   PeopleIcon,
-  StorefrontRoundedIcon,
   TrendingUpIcon,
   VerifiedUserIcon,
 } from '../../components/icons';
@@ -13,7 +12,6 @@ import {
   Box,
   Button,
   Chip,
-  Divider,
   LinearProgress,
   Paper,
   Stack,
@@ -28,7 +26,6 @@ import { ADMIN_TOKENS } from '../../theme/tokens';
 interface MerchantLoginPageProps {
   onLoggedIn: (session: MerchantSession) => void;
   onBackHome: () => void;
-  onCreateAccount: () => void;
 }
 
 const ecommerce_core_ICON_SRC = '/brand/ecommerce_core-icon.png';
@@ -49,7 +46,6 @@ const activityRows = [
 export function MerchantLoginPage({
   onLoggedIn,
   onBackHome,
-  onCreateAccount,
 }: MerchantLoginPageProps) {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
@@ -210,26 +206,6 @@ export function MerchantLoginPage({
             </Stack>
 
             <MerchantLogin onLoggedIn={onLoggedIn} />
-
-            <Divider>
-              <Typography variant="caption" sx={{ color: 'text.secondary', px: 1 }}>
-                متجر جديد؟
-              </Typography>
-            </Divider>
-
-            <Stack
-              direction={{ xs: 'column', sm: 'row' }}
-              spacing={1.5}
-              alignItems={{ xs: 'stretch', sm: 'center' }}
-              justifyContent="space-between"
-            >
-              <Typography variant="body2" color="text.secondary">
-                ابدأ بإعداد متجرك وفعّل قنوات البيع خلال دقائق.
-              </Typography>
-              <Button variant="outlined" onClick={onCreateAccount} startIcon={<StorefrontRoundedIcon />}>
-                إنشاء متجر
-              </Button>
-            </Stack>
           </Stack>
         </Paper>
 

@@ -32,7 +32,8 @@ describe('Sprint 11 affiliates core logic', () => {
       },
     };
 
-    const service = new AffiliatesService(repo, { async log() {} });
+    const capabilities = { async isFeatureEnabled() { return true; } };
+    const service = new AffiliatesService(repo, { async log() {} }, capabilities);
     const result = await service.resolveCheckoutAttribution({
       storeId: 'store-1',
       sessionId: 'session-1',
@@ -44,7 +45,7 @@ describe('Sprint 11 affiliates core logic', () => {
   });
 
   it('calculates commission as subtotal minus discount total', () => {
-    const service = new AffiliatesService({}, { async log() {} });
+    const service = new AffiliatesService({}, { async log() {} }, {});
     const result = service.computeCommissionAmount({
       subtotal: 1000,
       discountTotal: 120,
@@ -56,7 +57,7 @@ describe('Sprint 11 affiliates core logic', () => {
   });
 
   it('floors commission base at zero', () => {
-    const service = new AffiliatesService({}, { async log() {} });
+    const service = new AffiliatesService({}, { async log() {} }, {});
     const result = service.computeCommissionAmount({
       subtotal: 100,
       discountTotal: 150,
