@@ -39,6 +39,9 @@ import { UpdateCustomerProfileDto } from './dto/update-customer-profile.dto';
 import { CreateCustomerAddressDto } from './dto/create-customer-address.dto';
 import { CreateCustomerReviewDto } from './dto/create-customer-review.dto';
 import { UpdateCustomerReviewDto } from './dto/update-customer-review.dto';
+import { RequestOtpDto } from './dto/request-otp.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { ResendOtpDto } from './dto/resend-otp.dto';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { ListLoyaltyLedgerQueryDto } from '../loyalty/dto/list-loyalty-ledger-query.dto';
 
@@ -116,6 +119,41 @@ export class CustomersController {
     await this.customersService.resetPassword(body, store.id);
   }
 
+  @CustomerPublic()
+  @Post('otp/request')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOkResponse({ description: 'Request OTP' })
+  async requestOtp(
+    @Body() body: RequestOtpDto,
+    @Req() request: Request,
+  ): Promise<void> {
+    const store = await this.storeResolverService.resolve(request);
+    await this.customersService.requestOtp(body, store.id, getRequestContext(request));
+  }
+
+  @CustomerPublic()
+  @Post('otp/verify')
+  @ApiOkResponse({ description: 'Verify OTP and login/register' })
+  async verifyOtp(
+    @Body() body: VerifyOtpDto,
+    @Req() request: Request,
+  ): Promise<CustomerAuthResult> {
+    const store = await this.storeResolverService.resolve(request);
+    return this.customersService.verifyOtp(body, store.id, getRequestContext(request));
+  }
+
+  @CustomerPublic()
+  @Post('otp/resend')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOkResponse({ description: 'Resend OTP' })
+  async resendOtp(
+    @Body() body: ResendOtpDto,
+    @Req() request: Request,
+  ): Promise<void> {
+    const store = await this.storeResolverService.resolve(request);
+    await this.customersService.resendOtp(body, store.id, getRequestContext(request));
+  }
+
   @Get('me')
   @ApiBearerAuth()
   @ApiOkResponse({ description: 'Get current customer profile' })
@@ -132,6 +170,17 @@ export class CustomersController {
     @Req() request: Request,
   ): Promise<CustomerProfileResponse> {
     return this.customersService.updateProfile(customer, body, getRequestContext(request));
+  }
+
+  @Delete('me')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Delete current customer account' })
+  async deleteAccount(
+    @CurrentCustomer() customer: CustomerUser,
+    @Req() request: Request,
+  ): Promise<void> {
+    await this.customersService.deleteAccount(customer, getRequestContext(request));
   }
 
   @Get('addresses')

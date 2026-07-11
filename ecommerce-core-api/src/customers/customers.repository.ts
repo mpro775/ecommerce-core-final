@@ -123,6 +123,17 @@ export interface ManagedCustomerAbandonedCartRecord {
   created_at: Date;
 }
 
+export interface CustomerOtpRecord {
+  id: string;
+  store_id: string;
+  identifier: string;
+  otp_hash: string;
+  expires_at: Date;
+  attempts: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
 const CUSTOMER_SELECT_FIELDS = `
   id, store_id, full_name, phone, email, email_normalized, password_hash,
   email_verified_at, last_login_at, gender, country, city, birth_date, is_active, created_at, updated_at
@@ -1073,6 +1084,86 @@ export class CustomersRepository {
       [customerId, storeId],
     );
     return parseInt(result.rows[0]?.count ?? '0', 10);
+  }
+
+  // ==================== OTP ====================
+
+  async createOtp(input: {
+    storeId: string;
+    identifier: string;
+    otpHash: string;
+    expiresAt: Date;
+  }): Promise<CustomerOtpRecord> {
+    const id = uuidv4();
+    const result = await this.databaseService.db.query<CustomerOtpRecord>(
+      `
+        INSERT INTO customer_otps (id, store_id, identifier, otp_hash, expires_at)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (store_id, identifier) 
+        DO UPDATE SET otp_hash = $4, expires_at = $5, attempts = 0, updated_at = NOW()
+        RETURNING id, store_id, identifier, otp_hash, expires_at, attempts, created_at, updated_at
+      `,
+      [id, input.storeId, input.identifier, input.otpHash, input.expiresAt],
+    );
+    return result.rows[0]!;
+  }
+
+  async findOtp(storeId: string, identifier: string): Promise<CustomerOtpRecord | null> {
+    const result = await this.databaseService.db.query<CustomerOtpRecord>(
+      `
+        SELECT id, store_id, identifier, otp_hash, expires_at, attempts, created_at, updated_at
+        FROM customer_otps
+        WHERE store_id = $1 AND identifier = $2
+        LIMIT 1
+      `,
+      [storeId, identifier],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async incrementOtpAttempts(storeId: string, identifier: string): Promise<void> {
+    await this.databaseService.db.query(
+      `
+        UPDATE customer_otps
+        SET attempts = attempts + 1, updated_at = NOW()
+        WHERE store_id = $1 AND identifier = $2
+      `,
+      [storeId, identifier],
+    );
+  }
+
+  async deleteOtp(storeId: string, identifier: string): Promise<void> {
+    await this.databaseService.db.query(
+      `
+        DELETE FROM customer_otps
+        WHERE store_id = $1 AND identifier = $2
+      `,
+      [storeId, identifier],
+    );
+  }
+
+  // ==================== ACCOUNT DELETION ====================
+
+  async anonymizeCustomer(customerId: string): Promise<void> {
+    const randomStr = uuidv4().substring(0, 8);
+    const anonymizedEmail = `deleted_${randomStr}@deleted.local`;
+    const anonymizedPhone = `+00000000${randomStr}`;
+    
+    await this.databaseService.db.query(
+      `
+        UPDATE customers
+        SET 
+          full_name = 'Deleted User',
+          phone = $2,
+          email = $3,
+          email_normalized = $3,
+          password_hash = NULL,
+          is_active = FALSE,
+          updated_at = NOW()
+        WHERE id = $1
+      `,
+      [customerId, anonymizedPhone, anonymizedEmail],
+    );
   }
 }
 

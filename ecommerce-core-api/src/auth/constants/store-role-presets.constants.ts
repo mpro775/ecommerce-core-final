@@ -1,12 +1,14 @@
 import { PERMISSIONS } from './permission.constants';
 
 export const TEAM_ROLE_CODES = [
-  'manager',
-  'operations',
-  'catalog',
-  'support',
-  'finance',
-  'internal_marketing',
+  'general_manager',
+  'order_manager',
+  'product_manager',
+  'inventory_manager',
+  'customer_support',
+  'marketing_manager',
+  'accountant',
+  'viewer',
 ] as const;
 
 export type TeamRole = (typeof TEAM_ROLE_CODES)[number];
@@ -36,20 +38,22 @@ const CATALOG_PERMISSIONS = [
   PERMISSIONS.mediaWrite,
 ];
 
-const OPERATIONS_PERMISSIONS = [
+const ORDER_MANAGER_PERMISSIONS = [
   PERMISSIONS.dashboardRead,
   PERMISSIONS.ordersRead,
   PERMISSIONS.ordersWrite,
-  PERMISSIONS.inventoryRead,
-  PERMISSIONS.inventoryWrite,
-  PERMISSIONS.productsRead,
-  PERMISSIONS.productsWrite,
-  PERMISSIONS.customersRead,
-  PERMISSIONS.customersWrite,
   PERMISSIONS.shippingRead,
   PERMISSIONS.shippingWrite,
   PERMISSIONS.paymentsRead,
   PERMISSIONS.paymentsWrite,
+  PERMISSIONS.customersRead,
+];
+
+const INVENTORY_MANAGER_PERMISSIONS = [
+  PERMISSIONS.dashboardRead,
+  PERMISSIONS.inventoryRead,
+  PERMISSIONS.inventoryWrite,
+  PERMISSIONS.productsRead,
 ];
 
 const CUSTOMER_SUPPORT_PERMISSIONS = [
@@ -60,18 +64,7 @@ const CUSTOMER_SUPPORT_PERMISSIONS = [
   PERMISSIONS.notificationsRead,
 ];
 
-const FINANCE_PERMISSIONS = [
-  PERMISSIONS.dashboardRead,
-  PERMISSIONS.ordersRead,
-  PERMISSIONS.paymentsRead,
-  PERMISSIONS.reportsRead,
-  PERMISSIONS.reportsExport,
-  PERMISSIONS.billingRead,
-  PERMISSIONS.customersRead,
-  PERMISSIONS.affiliatesRead,
-];
-
-const INTERNAL_MARKETING_PERMISSIONS = [
+const MARKETING_MANAGER_PERMISSIONS = [
   PERMISSIONS.dashboardRead,
   PERMISSIONS.productsRead,
   PERMISSIONS.categoriesRead,
@@ -90,7 +83,28 @@ const INTERNAL_MARKETING_PERMISSIONS = [
   PERMISSIONS.affiliatesRead,
 ];
 
-const MANAGER_ALLOWED_PERMISSIONS = [
+const ACCOUNTANT_PERMISSIONS = [
+  PERMISSIONS.dashboardRead,
+  PERMISSIONS.ordersRead,
+  PERMISSIONS.paymentsRead,
+  PERMISSIONS.reportsRead,
+  PERMISSIONS.reportsExport,
+  PERMISSIONS.billingRead,
+  PERMISSIONS.customersRead,
+  PERMISSIONS.affiliatesRead,
+];
+
+const VIEWER_PERMISSIONS = [
+  PERMISSIONS.dashboardRead,
+  PERMISSIONS.ordersRead,
+  PERMISSIONS.productsRead,
+  PERMISSIONS.customersRead,
+  PERMISSIONS.reportsRead,
+  PERMISSIONS.analyticsRead,
+  PERMISSIONS.inventoryRead,
+];
+
+const GENERAL_MANAGER_PERMISSIONS = [
   PERMISSIONS.dashboardRead,
   PERMISSIONS.storeRead,
   PERMISSIONS.storeWrite,
@@ -140,46 +154,60 @@ const MANAGER_ALLOWED_PERMISSIONS = [
 
 export const STORE_ROLE_PRESETS: StoreRolePreset[] = [
   {
-    code: 'manager',
-    label: 'مدير',
-    description: 'صلاحيات تشغيل عالية لمعظم أقسام المتجر بدون صلاحية المالك الكاملة.',
-    defaultPermissions: MANAGER_ALLOWED_PERMISSIONS,
-    allowedPermissions: MANAGER_ALLOWED_PERMISSIONS,
+    code: 'general_manager',
+    label: 'مدير عام',
+    description: 'صلاحيات تشغيل شاملة للمتجر باستثناء الصلاحيات الخاصة بالمالك.',
+    defaultPermissions: GENERAL_MANAGER_PERMISSIONS,
+    allowedPermissions: GENERAL_MANAGER_PERMISSIONS,
   },
   {
-    code: 'operations',
-    label: 'عمليات',
-    description: 'إدارة الطلبات والمخزون والعملاء والمنتجات اليومية.',
-    defaultPermissions: OPERATIONS_PERMISSIONS,
-    allowedPermissions: OPERATIONS_PERMISSIONS,
+    code: 'order_manager',
+    label: 'مدير طلبات',
+    description: 'إدارة الطلبات، الشحن، والمدفوعات.',
+    defaultPermissions: ORDER_MANAGER_PERMISSIONS,
+    allowedPermissions: ORDER_MANAGER_PERMISSIONS,
   },
   {
-    code: 'catalog',
-    label: 'كتالوج',
-    description: 'إدارة المنتجات والتصنيفات والعلامات والخصائص والوسائط.',
+    code: 'product_manager',
+    label: 'مدير منتجات',
+    description: 'إدارة الكتالوج، المنتجات، التصنيفات، والعلامات التجارية.',
     defaultPermissions: CATALOG_PERMISSIONS,
     allowedPermissions: CATALOG_PERMISSIONS,
   },
   {
-    code: 'support',
+    code: 'inventory_manager',
+    label: 'مدير مخزون',
+    description: 'متابعة وإدارة المخزون.',
+    defaultPermissions: INVENTORY_MANAGER_PERMISSIONS,
+    allowedPermissions: INVENTORY_MANAGER_PERMISSIONS,
+  },
+  {
+    code: 'customer_support',
     label: 'دعم العملاء',
-    description: 'متابعة العملاء وقراءة الطلبات والتعامل مع طلبات الدعم.',
+    description: 'متابعة العملاء، قراءة الطلبات، والتعامل مع الدعم.',
     defaultPermissions: CUSTOMER_SUPPORT_PERMISSIONS,
     allowedPermissions: CUSTOMER_SUPPORT_PERMISSIONS,
   },
   {
-    code: 'finance',
-    label: 'مالي',
-    description: 'قراءة الطلبات والتقارير والعمولات دون تعديل فريق العمل.',
-    defaultPermissions: FINANCE_PERMISSIONS,
-    allowedPermissions: FINANCE_PERMISSIONS,
+    code: 'marketing_manager',
+    label: 'مدير تسويق',
+    description: 'إدارة العروض الترويجية، تحسين محركات البحث، والحملات.',
+    defaultPermissions: MARKETING_MANAGER_PERMISSIONS,
+    allowedPermissions: MARKETING_MANAGER_PERMISSIONS,
   },
   {
-    code: 'internal_marketing',
-    label: 'تسويق داخلي',
-    description: 'متابعة التسويق الداخلي والتحليلات دون إنشاء حسابات مسوقين بالعمولة.',
-    defaultPermissions: INTERNAL_MARKETING_PERMISSIONS,
-    allowedPermissions: INTERNAL_MARKETING_PERMISSIONS,
+    code: 'accountant',
+    label: 'محاسب',
+    description: 'التقارير المالية، الفواتير، وقراءة الطلبات.',
+    defaultPermissions: ACCOUNTANT_PERMISSIONS,
+    allowedPermissions: ACCOUNTANT_PERMISSIONS,
+  },
+  {
+    code: 'viewer',
+    label: 'مشاهد',
+    description: 'صلاحية قراءة فقط لمعظم أقسام المتجر.',
+    defaultPermissions: VIEWER_PERMISSIONS,
+    allowedPermissions: VIEWER_PERMISSIONS,
   },
 ];
 

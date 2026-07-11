@@ -32,6 +32,9 @@ import type { CreateManagedCustomerDto } from './dto/create-managed-customer.dto
 import type { ListManagedCustomersQueryDto } from './dto/list-managed-customers-query.dto';
 import type { UpdateManagedCustomerStatusDto } from './dto/update-managed-customer-status.dto';
 import type { UpdateManagedCustomerDto } from './dto/update-managed-customer.dto';
+import type { RequestOtpDto } from './dto/request-otp.dto';
+import type { VerifyOtpDto } from './dto/verify-otp.dto';
+import type { ResendOtpDto } from './dto/resend-otp.dto';
 
 export interface CustomerProfileResponse {
   id: string;
@@ -403,6 +406,115 @@ export class CustomersService {
       ipAddress: null,
       userAgent: null,
       metadata: {},
+    });
+  }
+
+  async requestOtp(input: RequestOtpDto, storeId: string, context: RequestContextData): Promise<void> {
+    const identifier = input.identifier.trim().toLowerCase();
+    
+    // In a real app, generate a 4-6 digit random number.
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpHash = await this.hashValue(otpCode);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins expiry
+
+    await this.customersRepository.createOtp({
+      storeId,
+      identifier,
+      otpHash,
+      expiresAt,
+    });
+
+    // Mock sending OTP
+    console.log(`[OTP] Sending OTP ${otpCode} to ${identifier} for store ${storeId}`);
+
+    await this.auditService.log({
+      action: 'customer.otp_requested',
+      storeId,
+      storeUserId: null,
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+      metadata: { requestId: context.requestId, identifier },
+    });
+  }
+
+  async verifyOtp(input: VerifyOtpDto, storeId: string, context: RequestContextData): Promise<CustomerAuthResult> {
+    const identifier = input.identifier.trim().toLowerCase();
+    const otpRecord = await this.customersRepository.findOtp(storeId, identifier);
+
+    if (!otpRecord) {
+      throw new UnauthorizedException('رمز التحقق غير موجود أو منتهي الصلاحية');
+    }
+
+    if (otpRecord.attempts >= 5) {
+      throw new UnauthorizedException('تجاوزت الحد المسموح به للمحاولات');
+    }
+
+    if (otpRecord.expires_at.getTime() <= Date.now()) {
+      throw new UnauthorizedException('رمز التحقق منتهي الصلاحية');
+    }
+
+    const valid = await argon2.verify(otpRecord.otp_hash, input.code);
+    if (!valid) {
+      await this.customersRepository.incrementOtpAttempts(storeId, identifier);
+      throw new UnauthorizedException('رمز التحقق غير صحيح');
+    }
+
+    await this.customersRepository.deleteOtp(storeId, identifier);
+
+    let customer = identifier.includes('@')
+      ? await this.customersRepository.findByEmail(storeId, identifier)
+      : await this.customersRepository.findByPhone(storeId, identifier);
+
+    if (!customer) {
+      // Auto-register if not found
+      const passwordHash = await this.hashValue(uuidv4()); // Dummy password
+      customer = await this.customersRepository.createRegistered({
+        storeId,
+        fullName: 'New Customer',
+        phone: identifier.includes('@') ? '' : identifier,
+        email: identifier.includes('@') ? identifier : null,
+        emailNormalized: identifier.includes('@') ? identifier : null,
+        passwordHash,
+      });
+    } else if (!customer.is_active) {
+      throw new UnauthorizedException('حساب العميل معطل');
+    }
+
+    await this.customersRepository.touchLastLogin(customer.id);
+    const result = await this.issueSession(customer, storeId, context);
+
+    await this.auditService.log({
+      action: 'customer.otp_verified',
+      storeId,
+      storeUserId: null,
+      targetType: 'customer',
+      targetId: customer.id,
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+      metadata: { requestId: context.requestId },
+    });
+
+    return result;
+  }
+
+  async resendOtp(input: ResendOtpDto, storeId: string, context: RequestContextData): Promise<void> {
+    // Basic resend is just requesting again. Rate limiting should ideally be enforced here or at controller level.
+    await this.requestOtp({ identifier: input.identifier }, storeId, context);
+  }
+
+  async deleteAccount(customer: CustomerUser, context: RequestContextData): Promise<void> {
+    await this.customersRepository.anonymizeCustomer(customer.id);
+    await this.customersRepository.revokeAllSessionsForCustomer(customer.id);
+
+    await this.auditService.log({
+      action: 'customer.account_deleted',
+      storeId: customer.storeId,
+      storeUserId: null,
+      targetType: 'customer',
+      targetId: customer.id,
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+      metadata: { requestId: context.requestId },
     });
   }
 
