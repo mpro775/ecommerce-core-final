@@ -1,0 +1,7 @@
+DROP INDEX IF EXISTS idx_product_variants_store_product_stock;
+DROP INDEX IF EXISTS idx_inventory_reservations_store_variant_status_expires;
+DROP INDEX IF EXISTS idx_order_status_history_store_order_created;
+DROP INDEX IF EXISTS idx_payments_store_created_status;
+DROP INDEX IF EXISTS idx_order_items_order_variant;
+DROP INDEX IF EXISTS idx_orders_store_customer_created;
+DROP INDEX IF EXISTS idx_orders_store_created_status;

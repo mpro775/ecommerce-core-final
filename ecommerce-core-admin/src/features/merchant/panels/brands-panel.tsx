@@ -1,0 +1,1 @@
+export { BrandsPanel } from './brands';

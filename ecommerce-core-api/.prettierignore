@@ -1,0 +1,5 @@
+node_modules
+dist
+coverage
+apps/*/.next
+docs/api/openapi.json

@@ -1,0 +1,7 @@
+DROP INDEX IF EXISTS idx_subscription_adjustments_created_at;
+DROP INDEX IF EXISTS idx_subscription_adjustments_accounting_category;
+DROP INDEX IF EXISTS idx_subscription_adjustments_operation;
+DROP INDEX IF EXISTS idx_subscription_adjustments_subscription_id;
+DROP INDEX IF EXISTS idx_subscription_adjustments_store_id;
+
+DROP TABLE IF EXISTS subscription_adjustments;

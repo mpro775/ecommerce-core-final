@@ -1,0 +1,1 @@
+export { WebhooksPanel } from './webhooks';

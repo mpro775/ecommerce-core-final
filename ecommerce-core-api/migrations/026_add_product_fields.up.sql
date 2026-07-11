@@ -1,0 +1,28 @@
+ALTER TABLE products
+  ADD COLUMN IF NOT EXISTS brand TEXT,
+  ADD COLUMN IF NOT EXISTS weight NUMERIC(10, 2),
+  ADD COLUMN IF NOT EXISTS dimensions JSONB,
+  ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12, 2),
+  ADD COLUMN IF NOT EXISTS seo_title TEXT,
+  ADD COLUMN IF NOT EXISTS seo_description TEXT,
+  ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS is_taxable BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS tax_rate NUMERIC(5, 2) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS min_order_quantity INTEGER NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS max_order_quantity INTEGER,
+  ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS rating_avg NUMERIC(3, 2) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS rating_count INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_products_store_featured
+  ON products (store_id, is_featured) WHERE is_featured = TRUE;
+
+CREATE INDEX IF NOT EXISTS idx_products_store_brand
+  ON products (store_id, brand) WHERE brand IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_products_store_published
+  ON products (store_id, published_at DESC NULLS LAST) WHERE published_at IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_products_tags
+  ON products USING GIN (tags);

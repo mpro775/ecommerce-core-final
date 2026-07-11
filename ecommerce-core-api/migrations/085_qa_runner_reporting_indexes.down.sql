@@ -1,0 +1,13 @@
+DROP INDEX IF EXISTS idx_qa_attachments_issue;
+DROP INDEX IF EXISTS idx_qa_issues_blocking;
+DROP INDEX IF EXISTS idx_qa_issues_status;
+DROP INDEX IF EXISTS idx_qa_issues_category;
+DROP INDEX IF EXISTS idx_qa_issues_phase;
+DROP INDEX IF EXISTS idx_qa_issues_scenario;
+DROP INDEX IF EXISTS idx_qa_answers_phase;
+DROP INDEX IF EXISTS idx_qa_answers_check;
+DROP INDEX IF EXISTS idx_qa_runs_build_version;
+DROP INDEX IF EXISTS idx_qa_runs_test_round;
+DROP INDEX IF EXISTS idx_qa_runs_started_at;
+DROP INDEX IF EXISTS idx_qa_runs_environment;
+DROP INDEX IF EXISTS idx_qa_runs_status;
