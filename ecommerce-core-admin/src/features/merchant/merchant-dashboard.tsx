@@ -18,7 +18,7 @@ import { useMerchantTabState } from './hooks/use-merchant-tab-state';
 import { useMerchantNotificationsRealtime } from './hooks/use-merchant-notifications-realtime';
 import { useNotificationSound } from './hooks/use-notification-sound';
 import { renderMerchantPanel } from './panel-registry';
-import { buildStorefrontVisitUrl } from './storefront-url';
+
 import type {
   MerchantRequester,
   MerchantTabKey,
@@ -142,10 +142,7 @@ export function MerchantDashboard({
     );
   }, []);
 
-  const storefrontVisitUrl = useMemo(
-    () => buildStorefrontVisitUrl(session.apiBaseUrl, storeSettings?.slug ?? null),
-    [session.apiBaseUrl, storeSettings?.slug],
-  );
+
 
   const handleOpenNavigation = useCallback(() => {
     setMobileSidebarOpen(true);
@@ -210,7 +207,7 @@ export function MerchantDashboard({
         <MerchantTopBar
           activeLabel={activeLabel}
           session={session}
-          storefrontVisitUrl={storefrontVisitUrl}
+
           storeName={storeSettings?.name ?? null}
           storeLogoUrl={storeSettings?.logoUrl ?? null}
           themeMode={themeMode}

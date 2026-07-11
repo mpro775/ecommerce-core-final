@@ -35,7 +35,7 @@ import { openMerchantAccessibilitySettings } from '../../../accessibility/mercha
 interface MerchantTopBarProps {
   activeLabel: string;
   session: MerchantSession;
-  storefrontVisitUrl: string | null;
+
   storeName?: string | null;
   storeLogoUrl?: string | null;
   themeMode: 'light' | 'dark';
@@ -59,7 +59,7 @@ const ecommerce_core_ICON_SRC = '/brand/ecommerce_core-icon.png';
 export function MerchantTopBar({
   activeLabel,
   session,
-  storefrontVisitUrl,
+
   storeName,
   storeLogoUrl,
   themeMode,
@@ -249,50 +249,7 @@ export function MerchantTopBar({
             </IconButton>
           </Tooltip>
 
-          <Button
-            component="a"
-            href={storefrontVisitUrl ?? undefined}
-            target="_blank"
-            rel="noreferrer"
-            disabled={!storefrontVisitUrl}
-            aria-label="زيارة المتجر"
-            title="زيارة المتجر"
-            startIcon={<StorefrontIcon fontSize="small" />}
-            sx={{
-              minWidth: { xs: 40, sm: 40, md: 124 },
-              width: { xs: 40, sm: 40, md: 'auto' },
-              height: 40,
-              px: { xs: 0, md: 1.35 },
-              gap: { xs: 0, md: 0.75 },
-              borderRadius: `${radius.md}px`,
-              border: '1px solid',
-              borderColor: controlBorder,
-              bgcolor: controlSurface,
-              color: 'text.secondary',
-              fontWeight: 800,
-              whiteSpace: 'nowrap',
-              '& .MuiButton-startIcon': {
-                m: 0,
-                marginInlineEnd: { xs: 0, md: 0.75 },
-              },
-              '&:hover': {
-                bgcolor: controlHover,
-                color: 'text.primary',
-                borderColor: isDark
-                  ? alpha(theme.palette.common.white, 0.16)
-                  : alpha(theme.palette.primary.main, 0.22),
-              },
-              '&.Mui-disabled': {
-                borderColor: controlBorder,
-                bgcolor: controlSurface,
-                color: 'text.disabled',
-              },
-            }}
-          >
-            <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>
-              زيارة المتجر
-            </Box>
-          </Button>
+
 
           <IconButton
             size="medium"

@@ -55,25 +55,7 @@ export const envValidationSchema = Joi.object({
     .max(60_000)
     .default(3_000),
   INVENTORY_RESERVATION_TTL_MINUTES: Joi.number().integer().min(1).max(120).default(15),
-  THEME_PREVIEW_TOKEN_TTL_MINUTES: Joi.number().integer().min(1).max(240).default(30),
-  TEMPLATE_PREVIEW_STORE_URL: Joi.string()
-    .uri({ scheme: ['http', 'https'] })
-    .default('http://localhost:3001/preview'),
-  TEMPLATE_PREVIEW_TOKEN_TTL_MINUTES: Joi.number().integer().min(5).max(1440).default(60),
-  DOMAIN_VERIFY_TXT_PREFIX: Joi.string().default('_kaleem-verify'),
-  DOMAIN_CNAME_TARGET: Joi.string().default('stores.example.com'),
-  DOMAIN_SSL_PROVIDER: Joi.string().valid('manual', 'cloudflare').default('manual'),
-  DOMAIN_SSL_MODE: Joi.string().valid('full', 'full_strict').default('full_strict'),
-  CLOUDFLARE_API_BASE_URL: Joi.string()
-    .uri({ scheme: ['http', 'https'] })
-    .default('https://api.cloudflare.com/client/v4'),
-  CLOUDFLARE_API_TOKEN: Joi.string().allow('').default(''),
-  CLOUDFLARE_ZONE_ID: Joi.string().allow('').default(''),
-  CLOUDFLARE_SSL_VALIDATION_METHOD: Joi.string().valid('txt', 'http').default('txt'),
-  CLOUDFLARE_MIN_TLS_VERSION: Joi.string().valid('1.2', '1.3').default('1.2'),
-  CLOUDFLARE_TLS_CIPHERS: Joi.string().allow('').default(''),
-  DOMAIN_SSL_SYNC_INTERVAL_MS: Joi.number().integer().min(60_000).max(3_600_000).default(300_000),
-  DOMAIN_SSL_SYNC_BATCH_SIZE: Joi.number().integer().min(1).max(500).default(100),
+
   PLATFORM_ADMIN_SECRET: productionSecret(32, 'ecommerce_core-local-platform-secret'),
   TOKEN_HASH_SECRET: Joi.when('NODE_ENV', {
     is: 'production',
@@ -154,9 +136,7 @@ export const envValidationSchema = Joi.object({
   API_PUBLIC_BASE_URL: Joi.string()
     .uri({ scheme: ['http', 'https'] })
     .default('http://localhost:3000'),
-  STOREFRONT_BASE_URL: Joi.string()
-    .uri({ scheme: ['http', 'https'] })
-    .default('http://localhost:3001'),
+
   MERCHANT_ADMIN_BASE_URL: Joi.string()
     .uri({ scheme: ['http', 'https'] })
     .default('http://localhost:5173'),

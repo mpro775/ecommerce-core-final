@@ -6,7 +6,6 @@ export type MerchantNotificationCategory =
   | 'checkout'
   | 'support'
   | 'domain'
-  | 'theme'
   | 'analytics'
   | 'system';
 
@@ -371,28 +370,6 @@ export const MERCHANT_NOTIFICATION_EVENTS = defineRegistry({
     isPersistent: true,
     dedupeKey: 'domain.dns_misconfigured:{{domainId}}',
   },
-  'theme.published': {
-    category: 'theme',
-    severity: 'success',
-    recipientType: 'store',
-    title: 'تم نشر قالب المتجر',
-    body: 'تم نشر تغييرات القالب بنجاح.',
-    actionUrl: '/merchant?tab=theme',
-    defaultFrequency: 'instant',
-    isPersistent: true,
-    dedupeKey: 'theme.published:{{storeId}}:{{version}}',
-  },
-  'theme.publish_failed': {
-    category: 'theme',
-    severity: 'critical',
-    recipientType: 'store',
-    title: 'فشل نشر القالب',
-    body: 'حدث خطأ أثناء نشر قالب المتجر.',
-    actionUrl: '/merchant?tab=theme',
-    defaultFrequency: 'instant',
-    isPersistent: true,
-    dedupeKey: 'theme.publish_failed:{{storeId}}:{{reason}}',
-  },
   'support.ticket.created': {
     category: 'support',
     severity: 'warning',
@@ -526,7 +503,6 @@ export const MERCHANT_NOTIFICATION_CATEGORIES: MerchantNotificationCategory[] = 
   'checkout',
   'support',
   'domain',
-  'theme',
   'analytics',
   'system',
 ];

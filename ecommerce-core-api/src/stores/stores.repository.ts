@@ -139,6 +139,22 @@ export class StoresRepository {
     return result.rows[0] ?? null;
   }
 
+  async findFirstActiveStore(): Promise<StorePublicRecord | null> {
+    const result = await this.databaseService.db.query<StorePublicRecord>(
+      `
+        SELECT id, name, slug, logo_url, favicon_url, currency_code,
+               COALESCE(status, CASE WHEN is_suspended THEN 'suspended' ELSE 'active' END) AS status,
+               is_suspended
+        FROM stores
+        WHERE COALESCE(status, 'active') <> 'deleted'
+        ORDER BY created_at ASC
+        LIMIT 1
+      `
+    );
+
+    return result.rows[0] ?? null;
+  }
+
   async updateSettings(input: {
     storeId: string;
     name: string;

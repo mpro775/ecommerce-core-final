@@ -547,7 +547,6 @@ export class SeoService {
     const summary = this.issueSummary(issues);
     const score = this.scoreIssues(issues);
     const sections = this.groupIssues(issues);
-    await this.seoRepository.logAuditRun(user.storeId, { score, summary }).catch(() => undefined);
     return {
       score,
       status: this.scoreStatus(score),
@@ -793,13 +792,6 @@ export class SeoService {
       }
     }
 
-    await this.seoRepository.logFixes(user.storeId, details, {
-      scope,
-      actorId: 'merchant',
-      source: 'template',
-      fixType: body.issueType ?? overwriteMode,
-    });
-
     return {
       success: true,
       fixed: details.filter((item) => item.status === 'fixed').length,
@@ -810,10 +802,6 @@ export class SeoService {
       failedCount: details.filter((item) => item.status === 'failed').length,
       details,
     };
-  }
-
-  async fixLogs(user: StoreScopedUser): Promise<{ items: SeoFixLogRecord[] }> {
-    return { items: await this.seoRepository.listFixLogs(user.storeId, 20) };
   }
 
   private normalizeSettings(value: Record<string, unknown>): StoreSeoSettings {
