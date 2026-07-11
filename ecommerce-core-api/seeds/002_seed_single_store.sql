@@ -162,7 +162,7 @@ SET profile_settings = EXCLUDED.profile_settings,
 INSERT INTO store_payment_methods (
   id,
   store_id,
-  platform_payment_method_id,
+  payment_method_catalog_id,
   is_enabled,
   sort_order
 )
@@ -172,9 +172,9 @@ SELECT
   ppm.id,
   TRUE,
   ppm.sort_order
-FROM platform_payment_methods ppm
+FROM payment_method_catalog ppm
 WHERE ppm.code = 'cod'
-ON CONFLICT (store_id, platform_payment_method_id) DO UPDATE
+ON CONFLICT (store_id, payment_method_catalog_id) DO UPDATE
 SET is_enabled = TRUE,
     sort_order = EXCLUDED.sort_order,
     updated_at = NOW();

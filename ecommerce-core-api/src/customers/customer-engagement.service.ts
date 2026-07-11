@@ -446,8 +446,8 @@ export class CustomerEngagementService {
       throw new NotFoundException('Tracking token not found');
     }
 
-    const storefrontBase = this.getStorefrontBaseUrl();
-    return `${storefrontBase}/products/${encodeURIComponent(tracked.product_slug)}?store=${encodeURIComponent(tracked.store_slug)}&rst=${encodeURIComponent(token)}`;
+    const appBase = this.getAppBaseUrl();
+    return `${appBase}/products/${encodeURIComponent(tracked.product_slug)}?store=${encodeURIComponent(tracked.store_slug)}&rst=${encodeURIComponent(token)}`;
   }
 
   async attachRestockConversion(input: {
@@ -460,8 +460,8 @@ export class CustomerEngagementService {
     return this.engagementRepository.attachRestockOrderConversion(input);
   }
 
-  private getStorefrontBaseUrl(): string {
-    const value = this.configService.get<string>('STOREFRONT_BASE_URL', 'http://localhost:3001');
+  private getAppBaseUrl(): string {
+    const value = this.configService.get<string>('MOBILE_APP_DEEP_LINK_BASE_URL', 'myapp://');
     return value.endsWith('/') ? value.slice(0, -1) : value;
   }
 

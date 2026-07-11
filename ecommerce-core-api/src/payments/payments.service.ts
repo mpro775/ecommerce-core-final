@@ -29,7 +29,7 @@ export interface PaymentResponse {
   status: PaymentStatus;
   amount: number;
   storePaymentMethodId: string | null;
-  platformPaymentMethodId: string | null;
+  paymentMethodCatalogId: string | null;
   paymentMethodCode: string | null;
   paymentMethodName: string | null;
   accountName: string | null;
@@ -341,7 +341,7 @@ export class PaymentsService {
       status: payment.status,
       amount: Number(payment.amount),
       storePaymentMethodId: payment.store_payment_method_id,
-      platformPaymentMethodId: payment.platform_payment_method_id,
+      paymentMethodCatalogId: payment.payment_method_catalog_id,
       paymentMethodCode: payment.payment_method_code,
       paymentMethodName: payment.payment_method_name,
       accountName: payment.account_name,

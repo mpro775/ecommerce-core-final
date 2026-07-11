@@ -36,7 +36,6 @@ npm run dev
 | `npm run migrate:up`          | Run database migrations          |
 | `npm run migrate:down`        | Rollback last migration          |
 | `npm run seed:run`            | Seed database                    |
-| `npm run platform:seed-admin` | Seed platform admin              |
 | `npm run queue:health`        | Check RabbitMQ health            |
 
 ## Workers

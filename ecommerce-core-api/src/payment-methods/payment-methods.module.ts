@@ -9,6 +9,7 @@ import { PaymentMethodsRepository } from './payment-methods.repository';
 import { PaymentMethodsService } from './payment-methods.service';
 
 @Module({
+  imports: [MediaModule, forwardRef(() => StorefrontModule)],
   controllers: [MerchantPaymentMethodsController, StorefrontPaymentMethodsController],
   providers: [PaymentMethodsService, PaymentMethodsRepository],
   exports: [PaymentMethodsService, PaymentMethodsRepository],

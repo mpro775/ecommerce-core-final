@@ -202,11 +202,6 @@ export function MerchantOnboarding({ session, onCompleted, onSignedOut }: Mercha
   const [mapResults, setMapResults] = useState<NominatimResult[]>([]);
   const [mapPoint, setMapPoint] = useState<[number, number] | null>(YEMEN_CENTER);
 
-  const storeSubdomainPreview = useMemo(() => slug.trim() || 'my-store', [slug]);
-  const storeUrlPreview = useMemo(
-    () => buildDefaultStoreUrl(storeSubdomainPreview),
-    [storeSubdomainPreview],
-  );
 
   useEffect(() => {
     initialize().catch(() => undefined);
@@ -1749,7 +1744,3 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
-function buildDefaultStoreUrl(slug: string): string {
-  const pattern = import.meta.env.VITE_STOREFRONT_URL_PATTERN || 'https://{storeSlug}.your-domain.com';
-  return pattern.replace('{storeSlug}', slug);
-}

@@ -1097,7 +1097,7 @@ export class OrdersRepository {
     amount: string;
     receipt_url: string | null;
     store_payment_method_id: string | null;
-    platform_payment_method_id: string | null;
+    payment_method_catalog_id: string | null;
     payment_method_code: string | null;
     payment_method_name: string | null;
     account_name: string | null;
@@ -1122,7 +1122,7 @@ export class OrdersRepository {
       amount: string;
       receipt_url: string | null;
       store_payment_method_id: string | null;
-      platform_payment_method_id: string | null;
+      payment_method_catalog_id: string | null;
       payment_method_code: string | null;
       payment_method_name: string | null;
       account_name: string | null;
@@ -1142,7 +1142,7 @@ export class OrdersRepository {
     }>(
       `
         SELECT id, method, status, amount, receipt_url,
-               store_payment_method_id, platform_payment_method_id,
+               store_payment_method_id, payment_method_catalog_id,
                payment_method_code, payment_method_name,
                account_name, account_number, phone_number, iban,
                instructions_ar, instructions_en, payer_reference,

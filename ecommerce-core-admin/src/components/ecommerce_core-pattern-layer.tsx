@@ -3,18 +3,18 @@ import { useTheme, type SxProps, type Theme } from '@mui/material/styles';
 import { useId } from 'react';
 import { ADMIN_TOKENS } from '../theme/tokens';
 
-type KaleemPatternVariant = 'hero' | 'dashboard' | 'section' | 'card';
-type KaleemPatternAnchor = 'start' | 'end' | 'center';
+type EcommerceCorePatternVariant = 'hero' | 'dashboard' | 'section' | 'card';
+type EcommerceCorePatternAnchor = 'start' | 'end' | 'center';
 
 interface EcommerceCorePatternLayerProps {
-  variant?: KaleemPatternVariant;
+  variant?: EcommerceCorePatternVariant;
   opacity?: number;
-  anchor?: KaleemPatternAnchor;
+  anchor?: EcommerceCorePatternAnchor;
   sx?: SxProps<Theme>;
 }
 
 const variantSettings: Record<
-  KaleemPatternVariant,
+  EcommerceCorePatternVariant,
   { strokeWidth: number; nodeScale: number; showCards: boolean; viewBox: string }
 > = {
   hero: { strokeWidth: 2.6, nodeScale: 1, showCards: true, viewBox: '0 0 1000 620' },
@@ -34,7 +34,7 @@ const signalNodes: Array<[number, number, number]> = [
   [866, 558, 7],
 ];
 
-function resolveTransform(anchor: KaleemPatternAnchor) {
+function resolveTransform(anchor: EcommerceCorePatternAnchor) {
   if (anchor === 'end') {
     return 'scaleX(-1)';
   }

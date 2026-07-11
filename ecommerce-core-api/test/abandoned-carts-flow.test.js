@@ -157,7 +157,7 @@ describe('abandoned carts recovery flow', () => {
           ABANDONED_CART_REMINDER_COOLDOWN_HOURS: 24,
           ABANDONED_CART_REMINDER_BATCH_SIZE: 100,
           API_PUBLIC_BASE_URL: 'http://localhost:3000',
-          STOREFRONT_BASE_URL: 'http://localhost:3001',
+          MOBILE_APP_DEEP_LINK_BASE_URL: 'myapp://',
         };
         return key in values ? values[key] : fallback;
       },

@@ -1,6 +1,6 @@
-# Ecommerce Core Store — Admin Dashboard
+# General Ecommerce Admin Dashboard
 
-Merchant and Platform admin dashboard for the Ecommerce Core Store SaaS e-commerce platform.
+Admin dashboard for the General Ecommerce Platform.
 
 ## Tech Stack
 

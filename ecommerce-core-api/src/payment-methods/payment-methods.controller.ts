@@ -53,13 +53,13 @@ export class MerchantPaymentMethodsController {
     return this.service.listStore(currentUser);
   }
 
-  @Post(':platformPaymentMethodId/enable')
+  @Post(':paymentMethodCatalogId/enable')
   @RequirePermissions(PERMISSIONS.paymentsWrite)
   async enable(
     @CurrentUser() currentUser: AuthUser,
-    @Param('platformPaymentMethodId', ParseUUIDPipe) platformPaymentMethodId: string,
+    @Param('paymentMethodCatalogId', ParseUUIDPipe) paymentMethodCatalogId: string,
   ) {
-    return this.service.enableStoreMethod(currentUser, platformPaymentMethodId);
+    return this.service.enableStoreMethod(currentUser, paymentMethodCatalogId);
   }
 
   @Patch(':id')

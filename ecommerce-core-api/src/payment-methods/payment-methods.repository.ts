@@ -10,7 +10,7 @@ interface Queryable {
   ) => Promise<{ rows: T[]; rowCount: number | null }>;
 }
 
-export interface PlatformPaymentMethodRecord {
+export interface PaymentMethodCatalogRecord {
   id: string;
   code: string;
   name_ar: string;
@@ -32,7 +32,7 @@ export interface PlatformPaymentMethodRecord {
 export interface StorePaymentMethodRecord {
   id: string;
   store_id: string;
-  platform_payment_method_id: string;
+  payment_method_catalog_id: string;
   is_enabled: boolean;
   account_name: string | null;
   account_number: string | null;
@@ -43,26 +43,26 @@ export interface StorePaymentMethodRecord {
   sort_order: number;
   created_at: Date;
   updated_at: Date;
-  platform_code: string;
-  platform_name_ar: string;
-  platform_name_en: string;
-  platform_description_ar: string | null;
-  platform_description_en: string | null;
-  platform_icon_url: string | null;
-  platform_media_asset_id: string | null;
-  platform_type: PaymentMethodType;
+  catalog_code: string;
+  catalog_name_ar: string;
+  catalog_name_en: string;
+  catalog_description_ar: string | null;
+  catalog_description_en: string | null;
+  catalog_icon_url: string | null;
+  catalog_media_asset_id: string | null;
+  catalog_type: PaymentMethodType;
   requires_reference: boolean;
   requires_receipt: boolean;
   is_receipt_optional: boolean;
-  platform_is_enabled: boolean;
-  platform_sort_order: number;
+  catalog_is_enabled: boolean;
+  catalog_sort_order: number;
 }
 
 export interface StorefrontPaymentMethodRecord extends StorePaymentMethodRecord {}
 
 export interface PaymentMethodSnapshot {
   storePaymentMethodId: string;
-  platformPaymentMethodId: string;
+  paymentMethodCatalogId: string;
   methodCode: string;
   methodName: string;
   type: PaymentMethodType;
@@ -77,7 +77,7 @@ export interface PaymentMethodSnapshot {
   isReceiptOptional: boolean;
 }
 
-const PLATFORM_FIELDS = `
+const CATALOG_FIELDS = `
   id, code, name_ar, name_en, description_ar, description_en, icon_url, media_asset_id, type,
   requires_reference, requires_receipt, is_receipt_optional, is_enabled,
   sort_order, created_at, updated_at
@@ -86,7 +86,7 @@ const PLATFORM_FIELDS = `
 const STORE_FIELDS = `
   spm.id,
   spm.store_id,
-  spm.platform_payment_method_id,
+  spm.payment_method_catalog_id,
   spm.is_enabled,
   spm.account_name,
   spm.account_number,
@@ -97,30 +97,30 @@ const STORE_FIELDS = `
   spm.sort_order,
   spm.created_at,
   spm.updated_at,
-  ppm.code AS platform_code,
-  ppm.name_ar AS platform_name_ar,
-  ppm.name_en AS platform_name_en,
-  ppm.description_ar AS platform_description_ar,
-  ppm.description_en AS platform_description_en,
-   ppm.icon_url AS platform_icon_url,
-   ppm.media_asset_id AS platform_media_asset_id,
-   ppm.type AS platform_type,
+  ppm.code AS catalog_code,
+  ppm.name_ar AS catalog_name_ar,
+  ppm.name_en AS catalog_name_en,
+  ppm.description_ar AS catalog_description_ar,
+  ppm.description_en AS catalog_description_en,
+   ppm.icon_url AS catalog_icon_url,
+   ppm.media_asset_id AS catalog_media_asset_id,
+   ppm.type AS catalog_type,
   ppm.requires_reference,
   ppm.requires_receipt,
   ppm.is_receipt_optional,
-  ppm.is_enabled AS platform_is_enabled,
-  ppm.sort_order AS platform_sort_order
+  ppm.is_enabled AS catalog_is_enabled,
+  ppm.sort_order AS catalog_sort_order
 `;
 
 @Injectable()
 export class PaymentMethodsRepository {
   constructor(private readonly databaseService: DatabaseService) {}
 
-  async listBaseCatalog(includeDisabled = true): Promise<PlatformPaymentMethodRecord[]> {
-    const result = await this.databaseService.db.query<PlatformPaymentMethodRecord>(
+  async listBaseCatalog(includeDisabled = true): Promise<PaymentMethodCatalogRecord[]> {
+    const result = await this.databaseService.db.query<PaymentMethodCatalogRecord>(
       `
-        SELECT ${PLATFORM_FIELDS}
-        FROM platform_payment_methods
+        SELECT ${CATALOG_FIELDS}
+        FROM payment_method_catalog
         WHERE $1::boolean OR is_enabled = TRUE
         ORDER BY sort_order ASC, created_at ASC
       `,
@@ -129,11 +129,11 @@ export class PaymentMethodsRepository {
     return result.rows;
   }
 
-  async findPlatformById(id: string): Promise<PlatformPaymentMethodRecord | null> {
-    const result = await this.databaseService.db.query<PlatformPaymentMethodRecord>(
+  async findPlatformById(id: string): Promise<PaymentMethodCatalogRecord | null> {
+    const result = await this.databaseService.db.query<PaymentMethodCatalogRecord>(
       `
-        SELECT ${PLATFORM_FIELDS}
-        FROM platform_payment_methods
+        SELECT ${CATALOG_FIELDS}
+        FROM payment_method_catalog
         WHERE id = $1
         LIMIT 1
       `,
@@ -142,11 +142,11 @@ export class PaymentMethodsRepository {
     return result.rows[0] ?? null;
   }
 
-  async findPlatformByCode(code: string): Promise<PlatformPaymentMethodRecord | null> {
-    const result = await this.databaseService.db.query<PlatformPaymentMethodRecord>(
+  async findPlatformByCode(code: string): Promise<PaymentMethodCatalogRecord | null> {
+    const result = await this.databaseService.db.query<PaymentMethodCatalogRecord>(
       `
-        SELECT ${PLATFORM_FIELDS}
-        FROM platform_payment_methods
+        SELECT ${CATALOG_FIELDS}
+        FROM payment_method_catalog
         WHERE code = $1
         LIMIT 1
       `,
@@ -160,7 +160,7 @@ export class PaymentMethodsRepository {
       `
         SELECT ${STORE_FIELDS}
         FROM store_payment_methods spm
-        INNER JOIN platform_payment_methods ppm ON ppm.id = spm.platform_payment_method_id
+        INNER JOIN payment_method_catalog ppm ON ppm.id = spm.payment_method_catalog_id
         WHERE spm.store_id = $1
         ORDER BY spm.sort_order ASC, ppm.sort_order ASC, spm.created_at ASC
       `,
@@ -174,7 +174,7 @@ export class PaymentMethodsRepository {
       `
         SELECT ${STORE_FIELDS}
         FROM store_payment_methods spm
-        INNER JOIN platform_payment_methods ppm ON ppm.id = spm.platform_payment_method_id
+        INNER JOIN payment_method_catalog ppm ON ppm.id = spm.payment_method_catalog_id
         WHERE spm.store_id = $1
           AND spm.is_enabled = TRUE
           AND ppm.is_enabled = TRUE
@@ -190,7 +190,7 @@ export class PaymentMethodsRepository {
       `
         SELECT ${STORE_FIELDS}
         FROM store_payment_methods spm
-        INNER JOIN platform_payment_methods ppm ON ppm.id = spm.platform_payment_method_id
+        INNER JOIN payment_method_catalog ppm ON ppm.id = spm.payment_method_catalog_id
         WHERE spm.store_id = $1
           AND spm.id = $2
         LIMIT 1
@@ -208,7 +208,7 @@ export class PaymentMethodsRepository {
       `
         SELECT ${STORE_FIELDS}
         FROM store_payment_methods spm
-        INNER JOIN platform_payment_methods ppm ON ppm.id = spm.platform_payment_method_id
+        INNER JOIN payment_method_catalog ppm ON ppm.id = spm.payment_method_catalog_id
         WHERE spm.store_id = $1
           AND spm.id = $2
           AND spm.is_enabled = TRUE
@@ -222,38 +222,38 @@ export class PaymentMethodsRepository {
 
   async findStoreByPlatformId(
     storeId: string,
-    platformPaymentMethodId: string,
+    paymentMethodCatalogId: string,
   ): Promise<StorePaymentMethodRecord | null> {
     const result = await this.databaseService.db.query<StorePaymentMethodRecord>(
       `
         SELECT ${STORE_FIELDS}
         FROM store_payment_methods spm
-        INNER JOIN platform_payment_methods ppm ON ppm.id = spm.platform_payment_method_id
+        INNER JOIN payment_method_catalog ppm ON ppm.id = spm.payment_method_catalog_id
         WHERE spm.store_id = $1
-          AND spm.platform_payment_method_id = $2
+          AND spm.payment_method_catalog_id = $2
         LIMIT 1
       `,
-      [storeId, platformPaymentMethodId],
+      [storeId, paymentMethodCatalogId],
     );
     return result.rows[0] ?? null;
   }
 
   async createStore(input: {
     storeId: string;
-    platformPaymentMethodId: string;
+    paymentMethodCatalogId: string;
     isEnabled: boolean;
     sortOrder: number;
   }): Promise<StorePaymentMethodRecord> {
     const result = await this.databaseService.db.query<StorePaymentMethodRecord>(
       `
         INSERT INTO store_payment_methods (
-          id, store_id, platform_payment_method_id, is_enabled, sort_order
+          id, store_id, payment_method_catalog_id, is_enabled, sort_order
         ) VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (store_id, platform_payment_method_id)
+        ON CONFLICT (store_id, payment_method_catalog_id)
         DO UPDATE SET updated_at = NOW()
         RETURNING id
       `,
-      [uuidv4(), input.storeId, input.platformPaymentMethodId, input.isEnabled, input.sortOrder],
+      [uuidv4(), input.storeId, input.paymentMethodCatalogId, input.isEnabled, input.sortOrder],
     );
     return (await this.findStoreById(input.storeId, result.rows[0]!.id))!;
   }
@@ -326,7 +326,7 @@ export class PaymentMethodsRepository {
       `
         INSERT INTO payments (
           id, store_id, order_id, method, status, amount, amount_yer,
-          store_payment_method_id, platform_payment_method_id,
+          store_payment_method_id, payment_method_catalog_id,
           payment_method_code, payment_method_name,
           account_name, account_number, phone_number, iban,
           instructions_ar, instructions_en,
@@ -350,7 +350,7 @@ export class PaymentMethodsRepository {
         input.amount,
         input.amountYER ?? input.amount,
         input.snapshot.storePaymentMethodId,
-        input.snapshot.platformPaymentMethodId,
+        input.snapshot.paymentMethodCatalogId,
         input.snapshot.methodCode,
         input.snapshot.methodName,
         input.snapshot.accountName,

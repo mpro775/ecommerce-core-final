@@ -33,7 +33,7 @@ export const envValidationSchema = Joi.object({
   HTTP_JSON_BODY_LIMIT: Joi.string().default('6mb'),
   DATABASE_URL: Joi.string()
     .uri({ scheme: ['postgres', 'postgresql'] })
-    .default('postgres://ecommerce_core:kaleem123@localhost:5432/ecommerce_core_store'),
+    .default('postgres://ecommerce_core:password@localhost:5432/ecommerce_core_store'),
   REDIS_URL: Joi.string()
     .uri({ scheme: ['redis'] })
     .default('redis://localhost:6379'),

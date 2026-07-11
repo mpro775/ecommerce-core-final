@@ -94,7 +94,7 @@ export class StoreReadinessRepository {
                   OR NULLIF(TRIM(COALESCE(spm.account_number, '')), '') IS NULL)
             )::int AS incomplete_payment_count
           FROM store_payment_methods spm
-          INNER JOIN platform_payment_methods ppm ON ppm.id = spm.platform_payment_method_id
+          INNER JOIN payment_method_catalog ppm ON ppm.id = spm.payment_method_catalog_id
           WHERE spm.store_id = $1
         ),
         shipping_stats AS (
@@ -203,17 +203,17 @@ export class StoreReadinessRepository {
       `
         WITH cod AS (
           SELECT id, sort_order
-          FROM platform_payment_methods
+          FROM payment_method_catalog
           WHERE is_enabled = TRUE
             AND type = 'cod'
           ORDER BY sort_order ASC, created_at ASC
           LIMIT 1
         ),
         inserted AS (
-          INSERT INTO store_payment_methods (id, store_id, platform_payment_method_id, is_enabled, sort_order)
+          INSERT INTO store_payment_methods (id, store_id, payment_method_catalog_id, is_enabled, sort_order)
           SELECT $2, $1, cod.id, TRUE, cod.sort_order
           FROM cod
-          ON CONFLICT (store_id, platform_payment_method_id)
+          ON CONFLICT (store_id, payment_method_catalog_id)
           DO UPDATE SET is_enabled = TRUE, updated_at = NOW()
           RETURNING id
         )

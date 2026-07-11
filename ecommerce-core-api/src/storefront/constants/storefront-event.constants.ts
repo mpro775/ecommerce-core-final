@@ -22,13 +22,6 @@ export const STOREFRONT_ANALYTICS_EVENT_NAMES = [
   'sf_checkout_submitted',
   'sf_checkout_completed',
   'sf_order_tracking_viewed',
-  'sf_theme_editor_opened',
-  'sf_theme_template_previewed',
-  'sf_theme_template_applied',
-  'sf_theme_draft_saved',
-  'sf_theme_published',
-  'sf_theme_version_restored',
-  'sf_theme_validation_failed',
 ] as const;
 
 export type StorefrontAnalyticsEventName = (typeof STOREFRONT_ANALYTICS_EVENT_NAMES)[number];

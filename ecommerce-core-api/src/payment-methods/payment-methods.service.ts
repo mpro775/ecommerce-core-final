@@ -10,12 +10,12 @@ import type { UpdateStorePaymentMethodDto } from './dto/store-payment-method.dto
 import {
   PaymentMethodsRepository,
   type PaymentMethodSnapshot,
-  type PlatformPaymentMethodRecord,
+  type PaymentMethodCatalogRecord,
   type StorePaymentMethodRecord,
 } from './payment-methods.repository';
 import { MediaRepository } from '../media/media.repository';
 
-export interface PlatformPaymentMethodResponse {
+export interface PaymentMethodCatalogResponse {
   id: string;
   code: string;
   nameAr: string;
@@ -37,7 +37,7 @@ export interface PlatformPaymentMethodResponse {
 export interface StorePaymentMethodResponse {
   id: string;
   storeId: string;
-  platformPaymentMethodId: string;
+  paymentMethodCatalogId: string;
   isEnabled: boolean;
   accountName: string | null;
   accountNumber: string | null;
@@ -46,7 +46,7 @@ export interface StorePaymentMethodResponse {
   instructionsAr: string | null;
   instructionsEn: string | null;
   sortOrder: number;
-  platformMethod: PlatformPaymentMethodResponse;
+  platformMethod: PaymentMethodCatalogResponse;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -82,7 +82,7 @@ export class PaymentMethodsService {
     private readonly mediaRepository: MediaRepository,
   ) {}
 
-  async listAvailableForMerchant(): Promise<PlatformPaymentMethodResponse[]> {
+  async listAvailableForMerchant(): Promise<PaymentMethodCatalogResponse[]> {
     const records = await this.repository.listBaseCatalog(false);
     return Promise.all(records.map((method) => this.mapPlatform(method)));
   }
@@ -94,15 +94,15 @@ export class PaymentMethodsService {
 
   async enableStoreMethod(
     currentUser: AuthUser,
-    platformPaymentMethodId: string,
+    paymentMethodCatalogId: string,
   ): Promise<StorePaymentMethodResponse> {
-    const platform = await this.repository.findPlatformById(platformPaymentMethodId);
+    const platform = await this.repository.findPlatformById(paymentMethodCatalogId);
     if (!platform || !platform.is_enabled) {
       throw new BadRequestException('طريقة الدفع غير متاحة من النظام حاليًا.');
     }
     const existing = await this.repository.findStoreByPlatformId(
       currentUser.storeId,
-      platformPaymentMethodId,
+      paymentMethodCatalogId,
     );
     if (existing) {
       const updated = await this.repository.updateStore(currentUser.storeId, existing.id, {
@@ -120,7 +120,7 @@ export class PaymentMethodsService {
     return await this.mapStore(
       await this.repository.createStore({
         storeId: currentUser.storeId,
-        platformPaymentMethodId,
+        paymentMethodCatalogId,
         isEnabled: platform.type === 'cod',
         sortOrder: platform.sort_order,
       }),
@@ -144,12 +144,12 @@ export class PaymentMethodsService {
       sortOrder: input.sortOrder ?? current.sort_order,
     };
     this.assertStoreMethodConfig(
-      current.platform_type,
+      current.catalog_type,
       next.isEnabled,
       next.accountName,
       next.accountNumber,
     );
-    if (next.isEnabled && !current.platform_is_enabled) {
+    if (next.isEnabled && !current.catalog_is_enabled) {
       throw new BadRequestException('طريقة الدفع غير مفعلة من النظام حاليًا.');
     }
     const updated = await this.repository.updateStore(currentUser.storeId, id, next);
@@ -166,12 +166,12 @@ export class PaymentMethodsService {
   ): Promise<StorePaymentMethodResponse> {
     const current = await this.requireStoreMethod(currentUser.storeId, id);
     this.assertStoreMethodConfig(
-      current.platform_type,
+      current.catalog_type,
       isEnabled,
       current.account_name,
       current.account_number,
     );
-    if (isEnabled && !current.platform_is_enabled) {
+    if (isEnabled && !current.catalog_is_enabled) {
       throw new BadRequestException('طريقة الدفع غير مفعلة من النظام حاليًا.');
     }
     const updated = await this.repository.updateStore(currentUser.storeId, id, {
@@ -206,7 +206,7 @@ export class PaymentMethodsService {
       const platform = await this.repository.findPlatformByCode(platformCode);
       if (platform) {
         method = await this.repository.findStoreByPlatformId(storeId, platform.id);
-        if (method && (!method.is_enabled || !method.platform_is_enabled)) {
+        if (method && (!method.is_enabled || !method.catalog_is_enabled)) {
           method = null;
         }
       }
@@ -246,10 +246,10 @@ export class PaymentMethodsService {
   private toSnapshot(method: StorePaymentMethodRecord): PaymentMethodSnapshot {
     return {
       storePaymentMethodId: method.id,
-      platformPaymentMethodId: method.platform_payment_method_id,
-      methodCode: method.platform_code,
-      methodName: method.platform_name_ar || method.platform_name_en,
-      type: method.platform_type,
+      paymentMethodCatalogId: method.payment_method_catalog_id,
+      methodCode: method.catalog_code,
+      methodName: method.catalog_name_ar || method.catalog_name_en,
+      type: method.catalog_type,
       accountName: method.account_name,
       accountNumber: method.account_number,
       phoneNumber: method.phone_number,
@@ -269,8 +269,8 @@ export class PaymentMethodsService {
   }
 
   private async mapPlatform(
-    method: PlatformPaymentMethodRecord,
-  ): Promise<PlatformPaymentMethodResponse> {
+    method: PaymentMethodCatalogRecord,
+  ): Promise<PaymentMethodCatalogResponse> {
     return {
       id: method.id,
       code: method.code,
@@ -295,7 +295,7 @@ export class PaymentMethodsService {
     return {
       id: method.id,
       storeId: method.store_id,
-      platformPaymentMethodId: method.platform_payment_method_id,
+      paymentMethodCatalogId: method.payment_method_catalog_id,
       isEnabled: method.is_enabled,
       accountName: method.account_name,
       accountNumber: method.account_number,
@@ -305,20 +305,20 @@ export class PaymentMethodsService {
       instructionsEn: method.instructions_en,
       sortOrder: method.sort_order,
       platformMethod: await this.mapPlatform({
-        id: method.platform_payment_method_id,
-        code: method.platform_code,
-        name_ar: method.platform_name_ar,
-        name_en: method.platform_name_en,
-        description_ar: method.platform_description_ar,
-        description_en: method.platform_description_en,
-        icon_url: method.platform_icon_url,
-        media_asset_id: method.platform_media_asset_id,
-        type: method.platform_type,
+        id: method.payment_method_catalog_id,
+        code: method.catalog_code,
+        name_ar: method.catalog_name_ar,
+        name_en: method.catalog_name_en,
+        description_ar: method.catalog_description_ar,
+        description_en: method.catalog_description_en,
+        icon_url: method.catalog_icon_url,
+        media_asset_id: method.catalog_media_asset_id,
+        type: method.catalog_type,
         requires_reference: method.requires_reference,
         requires_receipt: method.requires_receipt,
         is_receipt_optional: method.is_receipt_optional,
-        is_enabled: method.platform_is_enabled,
-        sort_order: method.platform_sort_order,
+        is_enabled: method.catalog_is_enabled,
+        sort_order: method.catalog_sort_order,
         created_at: method.created_at,
         updated_at: method.updated_at,
       }),
@@ -330,15 +330,15 @@ export class PaymentMethodsService {
   private mapStorefront(method: StorePaymentMethodRecord): StorefrontPaymentMethodResponse {
     return {
       id: method.id,
-      code: method.platform_code,
-      name: method.platform_name_ar || method.platform_name_en,
-      nameAr: method.platform_name_ar,
-      nameEn: method.platform_name_en,
-      description: method.platform_description_ar || method.platform_description_en,
-      descriptionAr: method.platform_description_ar,
-      descriptionEn: method.platform_description_en,
-      iconUrl: method.platform_icon_url,
-      type: method.platform_type,
+      code: method.catalog_code,
+      name: method.catalog_name_ar || method.catalog_name_en,
+      nameAr: method.catalog_name_ar,
+      nameEn: method.catalog_name_en,
+      description: method.catalog_description_ar || method.catalog_description_en,
+      descriptionAr: method.catalog_description_ar,
+      descriptionEn: method.catalog_description_en,
+      iconUrl: method.catalog_icon_url,
+      type: method.catalog_type,
       requiresReference: method.requires_reference,
       requiresReceipt: method.requires_receipt,
       isReceiptOptional: method.is_receipt_optional,

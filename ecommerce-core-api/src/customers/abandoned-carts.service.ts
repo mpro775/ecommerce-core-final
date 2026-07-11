@@ -142,7 +142,7 @@ export class AbandonedCartsService {
     await this.abandonedCartsRepository.reopenCart(recovery.store_id, recovery.cart_id);
 
     return {
-      redirectUrl: this.buildStorefrontRecoveryUrl({
+      redirectUrl: this.buildRecoveryUrl({
         storeSlug: recovery.store_slug,
         cartId: recovery.cart_id,
         token: recovery.recovery_token,
@@ -289,15 +289,15 @@ export class AbandonedCartsService {
     return `${apiBase}/app/recovery/${encodeURIComponent(token)}/open?store=${encodeURIComponent(storeSlug)}`;
   }
 
-  private buildStorefrontRecoveryUrl(input: {
+  private buildRecoveryUrl(input: {
     storeSlug: string;
     cartId: string;
     token: string;
   }): string {
-    const storefrontBase = this.configService
-      .get<string>('STOREFRONT_BASE_URL', 'http://localhost:3001')
+    const appBase = this.configService
+      .get<string>('MOBILE_APP_DEEP_LINK_BASE_URL', 'myapp://')
       .replace(/\/$/, '');
-    return `${storefrontBase}/checkout?cartId=${encodeURIComponent(input.cartId)}&recoveryToken=${encodeURIComponent(input.token)}&store=${encodeURIComponent(input.storeSlug)}`;
+    return `${appBase}/checkout?cartId=${encodeURIComponent(input.cartId)}&recoveryToken=${encodeURIComponent(input.token)}&store=${encodeURIComponent(input.storeSlug)}`;
   }
 
   private extractRecoveryEmailItems(raw: unknown): RecoveryEmailItem[] {

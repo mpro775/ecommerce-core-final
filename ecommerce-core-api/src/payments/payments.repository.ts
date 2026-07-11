@@ -11,7 +11,7 @@ export interface PaymentRecord {
   status: PaymentStatus;
   amount: string;
   store_payment_method_id: string | null;
-  platform_payment_method_id: string | null;
+  payment_method_catalog_id: string | null;
   payment_method_code: string | null;
   payment_method_name: string | null;
   account_name: string | null;
@@ -47,7 +47,7 @@ export interface PaymentWithOrder extends PaymentRecord {
 
 const PAYMENT_SELECT_FIELDS = `
   id, store_id, order_id, method, status, amount,
-  store_payment_method_id, platform_payment_method_id, payment_method_code, payment_method_name,
+  store_payment_method_id, payment_method_catalog_id, payment_method_code, payment_method_name,
   account_name, account_number, phone_number, iban, instructions_ar, instructions_en,
   payer_reference, payer_receipt_url, payer_receipt_media_asset_id, payer_note, customer_submitted_at,
   receipt_url, receipt_media_asset_id, reviewed_at, reviewed_by, review_note,
@@ -56,7 +56,7 @@ const PAYMENT_SELECT_FIELDS = `
 
 const PAYMENT_SELECT_FIELDS_PREFIXED = `
   p.id, p.store_id, p.order_id, p.method, p.status, p.amount,
-  p.store_payment_method_id, p.platform_payment_method_id, p.payment_method_code, p.payment_method_name,
+  p.store_payment_method_id, p.payment_method_catalog_id, p.payment_method_code, p.payment_method_name,
   p.account_name, p.account_number, p.phone_number, p.iban, p.instructions_ar, p.instructions_en,
   p.payer_reference, p.payer_receipt_url, p.payer_receipt_media_asset_id, p.payer_note, p.customer_submitted_at,
   p.receipt_url, p.receipt_media_asset_id, p.reviewed_at, p.reviewed_by, p.review_note,

@@ -2,7 +2,7 @@
     "name": "general-ecommerce-admin",
     "version": "0.1.0",
     "private": true,
-    "description": "General Ecommerce Platform — Merchant & Platform Admin Dashboard",
+    "description": "General Ecommerce Platform Admin Dashboard",
     "type": "module",
     "scripts": {
         "dev": "vite",

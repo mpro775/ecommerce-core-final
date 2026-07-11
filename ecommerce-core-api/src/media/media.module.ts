@@ -8,6 +8,8 @@ import { MediaService } from './media.service';
 import { STORAGE_ADAPTER } from './storage.adapter';
 
 @Module({
+  imports: [StoreCapabilitiesModule, SecurityModule],
+  controllers: [MediaController],
   providers: [
     MediaService,
     MediaRepository,

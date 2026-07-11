@@ -4,7 +4,7 @@ import pg from 'pg';
 
 const SEEDS_DIR = path.resolve('seeds');
 const connectionString =
-  process.env.DATABASE_URL ?? 'postgres://ecommerce_core:kaleem123@localhost:5432/ecommerce_core_store';
+  process.env.DATABASE_URL ?? 'postgres://ecommerce_core:password@localhost:5432/ecommerce_core_store';
 
 const client = new pg.Client({ connectionString });
 

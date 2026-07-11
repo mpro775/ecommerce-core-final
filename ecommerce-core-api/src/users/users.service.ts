@@ -916,7 +916,7 @@ export class UsersService {
   private buildInviteUrl(token: string): string {
     const adminBaseUrl = this.configService.get<string>(
       'MERCHANT_ADMIN_BASE_URL',
-      this.configService.get<string>('STOREFRONT_BASE_URL', 'http://localhost:3001'),
+      'http://localhost:5173',
     );
     const normalizedBaseUrl = adminBaseUrl.replace(/\/+$/, '');
     return `${normalizedBaseUrl}/accept-invite?token=${encodeURIComponent(token)}`;
