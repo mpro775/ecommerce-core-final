@@ -71,17 +71,7 @@ export interface StoreProfileSettingsResponse {
   supportedLanguages: Array<(typeof STORE_LANGUAGES)[number]>;
 }
 
-export interface StoreCurrencySettingsResponse {
-  baseCurrencyCode: 'YER';
-  defaultCurrencyCode: string;
-  supportedCurrencies: string[];
-  decimalDigits: number;
-  decimalDigitsByCurrency: Record<string, number>;
-  symbolPosition: (typeof CURRENCY_SYMBOL_POSITIONS)[number];
-  pricingMode: (typeof CURRENCY_PRICING_MODES)[number];
-  fixedPrices: JsonObject;
-  exchangeRates: Record<string, number>;
-}
+
 
 export interface StoreOrderSettingsResponse {
   minimumOrderValue: number;
@@ -168,7 +158,6 @@ export interface StoreSettingsResponse {
   termsAndConditions: string | null;
   loyaltyPolicy: string | null;
   profile: StoreProfileSettingsResponse;
-  currencySettings: StoreCurrencySettingsResponse;
   orderSettings: StoreOrderSettingsResponse;
   inventorySettings: StoreInventorySettingsResponse;
   taxSettings: StoreTaxSettingsResponse;
@@ -216,7 +205,7 @@ export class StoresService {
     private readonly auditService: AuditService,
     private readonly mediaService: MediaService,
     private readonly currencyService: CurrencyService,
-  ) {}
+  ) { }
 
   async getSettings(currentUser: AuthUser): Promise<StoreSettingsResponse> {
     return this.getSettingsByStoreId(currentUser.storeId);
@@ -591,11 +580,6 @@ export class StoresService {
   ): StoreSettingsResponse {
     const defaultCurrency = currencies.find((currency) => currency.isDefault);
     const profile = this.toProfileSettingsResponse(store, generalSettings?.profile_settings);
-    const currencySettings = this.toCurrencySettingsResponse(
-      store,
-      currencies,
-      generalSettings?.currency_settings,
-    );
     const orderSettings = this.toOrderSettingsResponse(generalSettings?.order_settings);
     const inventorySettings = this.toInventorySettingsResponse(
       generalSettings?.inventory_settings,
@@ -638,7 +622,6 @@ export class StoresService {
       termsAndConditions: store.terms_of_service,
       loyaltyPolicy: store.loyalty_policy,
       profile,
-      currencySettings,
       orderSettings,
       inventorySettings,
       taxSettings,
@@ -654,7 +637,6 @@ export class StoresService {
   ): {
     storeId: string;
     profileSettings: JsonObject;
-    currencySettings: JsonObject;
     orderSettings: JsonObject;
     inventorySettings: JsonObject;
     taxSettings: JsonObject;
@@ -668,14 +650,6 @@ export class StoresService {
         ...(input.profile?.icon !== undefined ? { iconUrl: input.profile.icon } : {}),
         ...(this.hasOwn(input, 'phone') ? { supportPhone: store.phone } : {}),
         ...(this.hasOwn(input, 'faviconUrl') ? { iconUrl: store.favicon_url } : {}),
-      },
-    );
-    const currencySettings = this.mergeSettings(
-      this.defaultCurrencySettings(currencies, store.default_currency_code ?? store.currency_code),
-      current?.currency_settings,
-      {
-        ...this.pickDefined(input.currencySettings),
-        ...(this.hasOwn(input, 'currencyCode') ? { defaultCurrencyCode: store.currency_code } : {}),
       },
     );
     const orderSettings = this.mergeSettings(
@@ -702,7 +676,6 @@ export class StoresService {
     return {
       storeId: store.id,
       profileSettings: this.normalizeProfileSettings(profileSettings),
-      currencySettings: this.normalizeCurrencySettings(currencySettings, currencies, store),
       orderSettings: this.normalizeOrderSettings(orderSettings),
       inventorySettings: this.normalizeInventorySettings(inventorySettings),
       taxSettings: this.normalizeTaxSettings(taxSettings),
@@ -745,57 +718,7 @@ export class StoresService {
     };
   }
 
-  private toCurrencySettingsResponse(
-    store: StoreSettingsRecord,
-    currencies: StoreCurrencyResponse[],
-    settings: JsonObject | undefined,
-  ): StoreCurrencySettingsResponse {
-    const normalized = this.normalizeCurrencySettings(
-      this.mergeSettings(
-        this.defaultCurrencySettings(currencies, store.default_currency_code ?? store.currency_code),
-        settings,
-      ),
-      currencies,
-      store,
-    );
-    const supportedCurrencies = currencies.map((currency) => currency.currencyCode);
-    const defaultCurrency =
-      currencies.find((currency) => currency.isDefault) ??
-      currencies.find((currency) => currency.currencyCode === store.default_currency_code) ??
-      currencies[0];
-    const decimalDigitsByCurrency = Object.fromEntries(
-      currencies.map((currency) => [currency.currencyCode, currency.decimalDigits]),
-    );
-    const exchangeRates = Object.fromEntries(
-      currencies.map((currency) => [currency.currencyCode, currency.yerPerUnit]),
-    );
 
-    return {
-      baseCurrencyCode: 'YER',
-      defaultCurrencyCode:
-        defaultCurrency?.currencyCode ??
-        this.readString(normalized, 'defaultCurrencyCode', store.default_currency_code) ??
-        'YER',
-      supportedCurrencies:
-        supportedCurrencies.length > 0
-          ? supportedCurrencies
-          : this.readStringArray(normalized, 'supportedCurrencies', ['YER']),
-      decimalDigits: defaultCurrency?.decimalDigits ?? this.readNumber(normalized, 'decimalDigits', 0),
-      decimalDigitsByCurrency,
-      symbolPosition: this.readEnum(
-        normalized,
-        'symbolPosition',
-        CURRENCY_SYMBOL_POSITIONS,
-        'after',
-      ),
-      pricingMode: this.readEnum(normalized, 'pricingMode', CURRENCY_PRICING_MODES, 'exchange_rate'),
-      fixedPrices: this.readObject(normalized, 'fixedPrices', {}),
-      exchangeRates: {
-        ...this.readNumberRecord(normalized, 'exchangeRates'),
-        ...exchangeRates,
-      },
-    };
-  }
 
   private toOrderSettingsResponse(settings: JsonObject | undefined): StoreOrderSettingsResponse {
     const normalized = this.normalizeOrderSettings(
@@ -894,26 +817,6 @@ export class StoresService {
       whatsapp: typeof store.social_links?.whatsapp === 'string' ? store.social_links.whatsapp : null,
       defaultLanguage: 'ar',
       supportedLanguages: ['ar', 'en'],
-    };
-  }
-
-  private defaultCurrencySettings(
-    currencies: StoreCurrencyResponse[],
-    defaultCurrencyCode: string | null,
-  ): JsonObject {
-    return {
-      defaultCurrencyCode: defaultCurrencyCode ?? 'YER',
-      supportedCurrencies:
-        currencies.length > 0 ? currencies.map((currency) => currency.currencyCode) : ['YER'],
-      decimalDigits:
-        currencies.find((currency) => currency.currencyCode === defaultCurrencyCode)?.decimalDigits ??
-        0,
-      symbolPosition: 'after',
-      pricingMode: 'exchange_rate',
-      fixedPrices: {},
-      exchangeRates: Object.fromEntries(
-        currencies.map((currency) => [currency.currencyCode, currency.yerPerUnit]),
-      ),
     };
   }
 
@@ -1025,36 +928,6 @@ export class StoresService {
       supportedLanguages: supportedLanguages.includes(defaultLanguage)
         ? supportedLanguages
         : [defaultLanguage, ...supportedLanguages],
-    };
-  }
-
-  private normalizeCurrencySettings(
-    settings: JsonObject,
-    currencies: StoreCurrencyResponse[],
-    store: StoreSettingsRecord,
-  ): JsonObject {
-    const supportedCurrencies =
-      currencies.length > 0
-        ? currencies.map((currency) => currency.currencyCode)
-        : this.readStringArray(settings, 'supportedCurrencies', ['YER']);
-    const defaultCurrencyCode =
-      currencies.find((currency) => currency.isDefault)?.currencyCode ??
-      this.readString(settings, 'defaultCurrencyCode', store.default_currency_code) ??
-      'YER';
-
-    return {
-      defaultCurrencyCode,
-      supportedCurrencies: supportedCurrencies.includes(defaultCurrencyCode)
-        ? supportedCurrencies
-        : [defaultCurrencyCode, ...supportedCurrencies],
-      decimalDigits: this.readNumber(settings, 'decimalDigits', 0),
-      symbolPosition: this.readEnum(settings, 'symbolPosition', CURRENCY_SYMBOL_POSITIONS, 'after'),
-      pricingMode: this.readEnum(settings, 'pricingMode', CURRENCY_PRICING_MODES, 'exchange_rate'),
-      fixedPrices: this.readObject(settings, 'fixedPrices', {}),
-      exchangeRates: {
-        ...this.readNumberRecord(settings, 'exchangeRates'),
-        ...Object.fromEntries(currencies.map((currency) => [currency.currencyCode, currency.yerPerUnit])),
-      },
     };
   }
 

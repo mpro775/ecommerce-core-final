@@ -18,6 +18,7 @@ import { ShippingRepository } from '../shipping/shipping.repository';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { AffiliatesService } from '../affiliates/affiliates.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
+import { CurrencyService } from '../currency/currency.service';
 import {
   canTransitionOrderStatus,
   ORDER_STATUSES,
@@ -155,6 +156,7 @@ export class OrdersService {
     private readonly webhooksService: WebhooksService,
     private readonly loyaltyService: LoyaltyService,
     private readonly affiliatesService: AffiliatesService,
+    private readonly currencyService: CurrencyService,
   ) {}
 
   async list(currentUser: AuthUser, query: ListOrdersQueryDto) {
@@ -251,6 +253,10 @@ export class OrdersService {
     input: CreateManualOrderDto,
     context: RequestContextData,
   ): Promise<OrderDetailResponse> {
+    const resolvedCurrency = await this.currencyService.resolveStoreCurrency(
+      currentUser.storeId,
+      input.currencyCode,
+    );
     const computation = await this.resolveManualOrderComputation(currentUser, input);
     const orderId = this.generateUuid();
     const orderCode = await this.generateOrderCode(currentUser.storeId);
@@ -271,8 +277,8 @@ export class OrdersService {
         shippingFee: computation.shippingFee,
         discountTotal: computation.discountTotal,
         couponCode: computation.couponCode,
-        currencyCode: 'YER',
-        exchangeRateYerPerUnit: 1,
+        currencyCode: resolvedCurrency.currencyCode,
+        exchangeRateYerPerUnit: resolvedCurrency.yerPerUnit,
         subtotalYER: computation.subtotal,
         totalYER: computation.total,
         shippingFeeYER: computation.shippingFee,
@@ -338,7 +344,7 @@ export class OrdersService {
         orderCode,
         storeId: currentUser.storeId,
         total: computation.total,
-        currencyCode: 'YER',
+        currencyCode: resolvedCurrency.currencyCode,
         customerName: computation.customer.full_name,
         customerId: computation.customer.id,
         customerPhone: computation.customer.phone,

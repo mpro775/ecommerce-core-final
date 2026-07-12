@@ -94,4 +94,9 @@ export class CreateManualOrderDto {
   @IsString()
   @MaxLength(120)
   area?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(3)
+  currencyCode?: string;
 }

@@ -227,7 +227,7 @@ export interface DeliveryAreaRecord {
 
 @Injectable()
 export class AnalyticsRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(private readonly databaseService: DatabaseService) { }
 
   async resolveWindowBounds(timezone: string, windowDays: number): Promise<WindowBoundsRecord> {
     const result = await this.databaseService.db.query<WindowBoundsRecord>(

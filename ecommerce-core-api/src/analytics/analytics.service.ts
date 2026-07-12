@@ -1,6 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
-import { parseIanaTimezone } from '../common/utils/timezone.util';
 import { OutboxService } from '../messaging/outbox.service';
 import { StoresRepository } from '../stores/stores.repository';
 import { ANALYTICS_ORDER_STATUSES } from './constants/analytics.constants';
@@ -8,7 +7,6 @@ import { AnalyticsRepository } from './analytics.repository';
 
 export interface AnalyticsOverviewResponse {
   windowDays: number;
-  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -34,7 +32,6 @@ export interface AnalyticsOverviewResponse {
 
 export interface OrdersStatusBreakdownResponse {
   windowDays: number;
-  timezone: string;
   startAt: Date;
   endAt: Date;
   totalOrders: number;
@@ -43,7 +40,6 @@ export interface OrdersStatusBreakdownResponse {
 
 export interface TopSellingProductsResponse {
   windowDays: number;
-  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -58,7 +54,6 @@ export interface TopSellingProductsResponse {
 
 export interface FulfillmentSlaResponse {
   windowDays: number;
-  timezone: string;
   startAt: Date;
   endAt: Date;
   items: Array<{
@@ -72,7 +67,6 @@ export interface FulfillmentSlaResponse {
 
 export interface PaymentsPerformanceResponse {
   windowDays: number;
-  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -93,7 +87,6 @@ export interface PaymentsPerformanceResponse {
 
 export interface PromotionsEfficiencyResponse {
   windowDays: number;
-  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -117,7 +110,6 @@ export interface PromotionsEfficiencyResponse {
 
 export interface InventoryHealthResponse {
   windowDays: number;
-  timezone: string;
   startAt: Date;
   endAt: Date;
   kpis: {
@@ -148,7 +140,6 @@ export interface InventoryHealthResponse {
 
 export interface StockoutRiskResponse {
   windowDays: number;
-  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -167,7 +158,6 @@ export interface StockoutRiskResponse {
 
 export interface CustomersRetentionResponse {
   windowDays: number;
-  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -191,7 +181,6 @@ export interface CustomersRetentionResponse {
 
 export interface FunnelConversionResponse {
   windowDays: number;
-  timezone: string;
   startAt: Date;
   endAt: Date;
   stages: Array<{
@@ -204,7 +193,6 @@ export interface FunnelConversionResponse {
 
 export interface SourceAttributionResponse {
   windowDays: number;
-  timezone: string;
   startAt: Date;
   endAt: Date;
   items: Array<{
@@ -220,7 +208,6 @@ export interface SourceAttributionResponse {
 
 export interface AffiliatePerformanceResponse {
   windowDays: number;
-  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -238,7 +225,6 @@ export interface AffiliatePerformanceResponse {
 
 export interface AbandonedCartMetricsResponse {
   windowDays: number;
-  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -255,7 +241,6 @@ export interface AbandonedCartMetricsResponse {
 
 export interface EventTaxonomyResponse {
   windowDays: number;
-  timezone: string;
   startAt: Date;
   endAt: Date;
   items: Array<{
@@ -268,7 +253,6 @@ export interface EventTaxonomyResponse {
 
 export interface AnalyticsDataQualityResponse {
   windowDays: number;
-  timezone: string;
   startAt: Date;
   endAt: Date;
   score: number;
@@ -283,7 +267,6 @@ export interface AnalyticsDataQualityResponse {
 
 export interface AnalyticsAnomalyReportResponse {
   windowDays: number;
-  timezone: string;
   thresholdPercent: number;
   currentWindow: { startAt: Date; endAt: Date };
   previousWindow: { startAt: Date; endAt: Date };
@@ -299,7 +282,6 @@ export interface AnalyticsAnomalyReportResponse {
 
 export interface AnalyticsGeneralResponse {
   windowDays: number;
-  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -337,7 +319,6 @@ export interface AnalyticsGeneralResponse {
 }
 
 export interface AnalyticsLiveResponse {
-  timezone: string;
   liveMinutes: number;
   startAt: Date;
   endAt: Date;
@@ -356,7 +337,6 @@ export interface AnalyticsLiveResponse {
 
 export interface AnalyticsProductsResponse {
   windowDays: number;
-  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -371,7 +351,6 @@ export interface AnalyticsProductsResponse {
 
 export interface AnalyticsOperationsResponse {
   windowDays: number;
-  timezone: string;
   startAt: Date;
   endAt: Date;
   kpis: {
@@ -388,7 +367,6 @@ export interface AnalyticsOperationsResponse {
 
 export interface AnalyticsPaymentsAdvancedResponse {
   windowDays: number;
-  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -413,7 +391,6 @@ export interface AnalyticsPaymentsAdvancedResponse {
 
 export interface AnalyticsFinancialResponse {
   windowDays: number;
-  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -429,7 +406,6 @@ export interface AnalyticsFinancialResponse {
 
 export interface AnalyticsShipmentsResponse {
   windowDays: number;
-  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -477,9 +453,8 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
 
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, input.windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(input.windowDays);
     const [overview, payment, orderStatusRows, topProductsRows] = await Promise.all([
       this.analyticsRepository.getOverviewSnapshot({
         storeId: currentUser.storeId,
@@ -536,7 +511,6 @@ export class AnalyticsService {
 
     return {
       windowDays: input.windowDays,
-      timezone,
       currencyCode: store.currency_code,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
@@ -563,9 +537,8 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
 
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(windowDays);
     const rows = await this.analyticsRepository.listOrdersByStatus({
       storeId: currentUser.storeId,
       startAt: bounds.start_at,
@@ -585,7 +558,6 @@ export class AnalyticsService {
 
     return {
       windowDays,
-      timezone,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
       totalOrders,
@@ -601,9 +573,8 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
 
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, input.windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(input.windowDays);
     const [overview, rows] = await Promise.all([
       this.analyticsRepository.getOverviewSnapshot({
         storeId: currentUser.storeId,
@@ -621,7 +592,6 @@ export class AnalyticsService {
     const netSales = Number(overview.net_sales);
     return {
       windowDays: input.windowDays,
-      timezone,
       currencyCode: store.currency_code,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
@@ -646,8 +616,7 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(windowDays);
     const rows = await this.analyticsRepository.getFulfillmentSla({
       storeId: currentUser.storeId,
       startAt: bounds.start_at,
@@ -673,7 +642,6 @@ export class AnalyticsService {
 
     return {
       windowDays,
-      timezone,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
       items,
@@ -688,8 +656,7 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(windowDays);
     const snapshot = await this.analyticsRepository.getPaymentsPerformance({
       storeId: currentUser.storeId,
       startAt: bounds.start_at,
@@ -698,7 +665,6 @@ export class AnalyticsService {
 
     return {
       windowDays,
-      timezone,
       currencyCode: store.currency_code,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
@@ -729,8 +695,7 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, input.windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(input.windowDays);
     const [snapshot, topCoupons] = await Promise.all([
       this.analyticsRepository.getPromotionsEfficiency({
         storeId: currentUser.storeId,
@@ -751,7 +716,6 @@ export class AnalyticsService {
 
     return {
       windowDays: input.windowDays,
-      timezone,
       currencyCode: store.currency_code,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
@@ -783,8 +747,7 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, input.windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(input.windowDays);
 
     const [snapshot, lowStockItems, slowMovingItems] = await Promise.all([
       this.analyticsRepository.getInventoryHealthSnapshot({
@@ -808,7 +771,6 @@ export class AnalyticsService {
 
     return {
       windowDays: input.windowDays,
-      timezone,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
       kpis: {
@@ -849,8 +811,7 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, input.windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(input.windowDays);
     const rows = await this.analyticsRepository.listStockoutRisk({
       storeId: currentUser.storeId,
       startAt: bounds.start_at,
@@ -861,7 +822,6 @@ export class AnalyticsService {
 
     return {
       windowDays: input.windowDays,
-      timezone,
       currencyCode: store.currency_code,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
@@ -887,8 +847,7 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, input.windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(input.windowDays);
     const [snapshot, topRepeatCustomers] = await Promise.all([
       this.analyticsRepository.getCustomerRetentionSnapshot({
         storeId: currentUser.storeId,
@@ -905,7 +864,6 @@ export class AnalyticsService {
 
     return {
       windowDays: input.windowDays,
-      timezone,
       currencyCode: store.currency_code,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
@@ -942,8 +900,7 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(windowDays);
     const rows = await this.analyticsRepository.getFunnelCounts({
       storeId: currentUser.storeId,
       startAt: bounds.start_at,
@@ -974,7 +931,6 @@ export class AnalyticsService {
 
     return {
       windowDays,
-      timezone,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
       stages,
@@ -989,8 +945,7 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, input.windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(input.windowDays);
     const rows = await this.analyticsRepository.getSourceAttribution({
       storeId: currentUser.storeId,
       startAt: bounds.start_at,
@@ -1000,7 +955,6 @@ export class AnalyticsService {
 
     return {
       windowDays: input.windowDays,
-      timezone,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
       items: rows.map((row) => ({
@@ -1023,8 +977,7 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, input.windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(input.windowDays);
     const rows = await this.analyticsRepository.getAffiliatePerformance({
       storeId: currentUser.storeId,
       startAt: bounds.start_at,
@@ -1034,7 +987,6 @@ export class AnalyticsService {
 
     return {
       windowDays: input.windowDays,
-      timezone,
       currencyCode: store.currency_code,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
@@ -1059,8 +1011,7 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(windowDays);
     const metrics = await this.analyticsRepository.getAbandonedCartMetrics({
       storeId: currentUser.storeId,
       startAt: bounds.start_at,
@@ -1080,7 +1031,6 @@ export class AnalyticsService {
 
     return {
       windowDays,
-      timezone,
       currencyCode: store.currency_code,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
@@ -1104,8 +1054,7 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, input.windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(input.windowDays);
     const rows = await this.analyticsRepository.getEventTaxonomy({
       storeId: currentUser.storeId,
       startAt: bounds.start_at,
@@ -1115,7 +1064,6 @@ export class AnalyticsService {
 
     return {
       windowDays: input.windowDays,
-      timezone,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
       items: rows.map((row) => ({
@@ -1135,8 +1083,7 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(windowDays);
     const snapshot = await this.analyticsRepository.getDataQualitySnapshot({
       storeId: currentUser.storeId,
       startAt: bounds.start_at,
@@ -1180,7 +1127,6 @@ export class AnalyticsService {
 
     return {
       windowDays,
-      timezone,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
       score,
@@ -1197,9 +1143,7 @@ export class AnalyticsService {
     if (!store) {
       throw new NotFoundException('Store not found');
     }
-    const timezone = this.resolveStoreTimezone(store.timezone);
     const currentBounds = await this.analyticsRepository.resolveWindowBounds(
-      timezone,
       input.windowDays,
     );
     const windowDuration = currentBounds.end_at.getTime() - currentBounds.start_at.getTime();
@@ -1259,7 +1203,6 @@ export class AnalyticsService {
 
     return {
       windowDays: input.windowDays,
-      timezone,
       thresholdPercent: input.thresholdPercent,
       currentWindow: {
         startAt: currentBounds.start_at,
@@ -1853,8 +1796,7 @@ export class AnalyticsService {
     currentUser: AuthUser,
     input: AnalyticsRangeInput,
   ): Promise<{
-    timezone: string;
-    currencyCode: string;
+      currencyCode: string;
     startAt: Date;
     endAt: Date;
     windowDays: number;
@@ -1874,8 +1816,7 @@ export class AnalyticsService {
       const endAt = now;
       const startAt = new Date(endAt.getTime() - liveMinutes * 60_000);
       return {
-        timezone,
-        currencyCode: store.currency_code ?? 'YER',
+          currencyCode: store.currency_code ?? 'YER',
         startAt,
         endAt,
         windowDays: Math.max(1, Math.ceil((endAt.getTime() - startAt.getTime()) / 86_400_000)),
@@ -1892,8 +1833,7 @@ export class AnalyticsService {
       }
 
       return {
-        timezone,
-        currencyCode: store.currency_code ?? 'YER',
+          currencyCode: store.currency_code ?? 'YER',
         startAt,
         endAt,
         windowDays: Math.max(1, Math.ceil((endAt.getTime() - startAt.getTime()) / 86_400_000)),
@@ -1901,9 +1841,8 @@ export class AnalyticsService {
     }
 
     const windowDays = input.preset ?? input.window ?? 30;
-    const bounds = await this.analyticsRepository.resolveWindowBounds(timezone, windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(windowDays);
     return {
-      timezone,
       currencyCode: store.currency_code ?? 'YER',
       startAt: bounds.start_at,
       endAt: bounds.end_at,
@@ -1911,13 +1850,6 @@ export class AnalyticsService {
     };
   }
 
-  private resolveStoreTimezone(timezone: string): string {
-    const resolved = parseIanaTimezone(timezone);
-    if (!resolved) {
-      throw new BadRequestException('Store timezone is invalid. Update store settings first.');
-    }
-    return resolved;
-  }
 }
 
 export interface AnalyticsRangeInput {

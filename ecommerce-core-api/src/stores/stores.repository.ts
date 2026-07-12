@@ -53,7 +53,6 @@ export interface StorePublicRecord {
 export interface StoreGeneralSettingsRecord {
   store_id: string;
   profile_settings: Record<string, unknown>;
-  currency_settings: Record<string, unknown>;
   order_settings: Record<string, unknown>;
   inventory_settings: Record<string, unknown>;
   tax_settings: Record<string, unknown>;
@@ -62,7 +61,7 @@ export interface StoreGeneralSettingsRecord {
 
 @Injectable()
 export class StoresRepository {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(private readonly databaseService: DatabaseService) { }
 
   async findById(storeId: string): Promise<StoreSettingsRecord | null> {
     const result = await this.databaseService.db.query<StoreSettingsRecord>(
@@ -89,7 +88,7 @@ export class StoresRepository {
     await this.ensureGeneralSettings(storeId);
     const result = await this.databaseService.db.query<StoreGeneralSettingsRecord>(
       `
-        SELECT store_id, profile_settings, currency_settings, order_settings,
+        SELECT store_id, profile_settings, order_settings,
                inventory_settings, tax_settings, mobile_app_config
         FROM store_general_settings
         WHERE store_id = $1
@@ -273,7 +272,6 @@ export class StoresRepository {
   async updateGeneralSettings(input: {
     storeId: string;
     profileSettings: Record<string, unknown>;
-    currencySettings: Record<string, unknown>;
     orderSettings: Record<string, unknown>;
     inventorySettings: Record<string, unknown>;
     taxSettings: Record<string, unknown>;
@@ -284,28 +282,25 @@ export class StoresRepository {
         INSERT INTO store_general_settings (
           store_id,
           profile_settings,
-          currency_settings,
           order_settings,
           inventory_settings,
           tax_settings,
           mobile_app_config
         )
-        VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb)
+        VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb)
         ON CONFLICT (store_id) DO UPDATE
         SET profile_settings = EXCLUDED.profile_settings,
-            currency_settings = EXCLUDED.currency_settings,
             order_settings = EXCLUDED.order_settings,
             inventory_settings = EXCLUDED.inventory_settings,
             tax_settings = EXCLUDED.tax_settings,
             mobile_app_config = EXCLUDED.mobile_app_config,
             updated_at = NOW()
-        RETURNING store_id, profile_settings, currency_settings, order_settings,
+        RETURNING store_id, profile_settings, order_settings,
                   inventory_settings, tax_settings, mobile_app_config
       `,
       [
         input.storeId,
         JSON.stringify(input.profileSettings),
-        JSON.stringify(input.currencySettings),
         JSON.stringify(input.orderSettings),
         JSON.stringify(input.inventorySettings),
         JSON.stringify(input.taxSettings),
@@ -335,8 +330,7 @@ export class StoresRepository {
       `
         INSERT INTO store_general_settings (
           store_id,
-          profile_settings,
-          currency_settings
+          profile_settings
         )
         SELECT
           id,
@@ -349,12 +343,6 @@ export class StoresRepository {
             'whatsapp', social_links->>'whatsapp',
             'defaultLanguage', 'ar',
             'supportedLanguages', jsonb_build_array('ar', 'en')
-          ),
-          jsonb_build_object(
-            'symbolPosition', 'after',
-            'pricingMode', 'exchange_rate',
-            'fixedPrices', '{}'::jsonb,
-            'exchangeRates', '{}'::jsonb
           )
         FROM stores
         WHERE id = $1

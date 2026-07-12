@@ -106,42 +106,6 @@ class StoreProfileSettingsDto {
   supportedLanguages?: Array<(typeof STORE_LANGUAGES)[number]>;
 }
 
-class CurrencySettingsDto {
-  @IsOptional()
-  @IsString()
-  @Length(3, 3)
-  @IsIn(STORE_CURRENCY_CODES)
-  defaultCurrencyCode?: string;
-
-  @IsOptional()
-  @IsArray()
-  @IsIn(STORE_CURRENCY_CODES, { each: true })
-  supportedCurrencies?: Array<(typeof STORE_CURRENCY_CODES)[number]>;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @Max(4)
-  decimalDigits?: number;
-
-  @IsOptional()
-  @IsIn(CURRENCY_SYMBOL_POSITIONS)
-  symbolPosition?: (typeof CURRENCY_SYMBOL_POSITIONS)[number];
-
-  @IsOptional()
-  @IsIn(CURRENCY_PRICING_MODES)
-  pricingMode?: (typeof CURRENCY_PRICING_MODES)[number];
-
-  @IsOptional()
-  @IsObject()
-  fixedPrices?: Record<string, unknown>;
-
-  @IsOptional()
-  @IsObject()
-  exchangeRates?: Record<string, unknown>;
-}
-
 class OrderSettingsDto {
   @IsOptional()
   @Type(() => Number)
@@ -486,11 +450,6 @@ export class UpdateStoreSettingsDto {
   @ValidateNested()
   @Type(() => StoreProfileSettingsDto)
   profile?: StoreProfileSettingsDto;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => CurrencySettingsDto)
-  currencySettings?: CurrencySettingsDto;
 
   @IsOptional()
   @ValidateNested()
