@@ -1,6 +1,6 @@
 ALTER TABLE stores
   ADD COLUMN IF NOT EXISTS logo_media_asset_id UUID REFERENCES media_assets(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS country TEXT NOT NULL DEFAULT 'Çáíãä',
+  ADD COLUMN IF NOT EXISTS country TEXT NOT NULL DEFAULT 'Ø§Ù„ÙŠÙ…Ù†',
   ADD COLUMN IF NOT EXISTS city TEXT,
   ADD COLUMN IF NOT EXISTS address_details TEXT,
   ADD COLUMN IF NOT EXISTS latitude NUMERIC(10, 7),
@@ -24,7 +24,7 @@ SET social_links = jsonb_build_object(
 );
 
 UPDATE stores
-SET country = 'Çáíãä'
+SET country = 'Ø§Ù„ÙŠÙ…Ù†'
 WHERE country IS NULL OR BTRIM(country) = '';
 
 DO $$

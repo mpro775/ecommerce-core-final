@@ -7,7 +7,6 @@ import type { CustomerUser } from '../customers/interfaces/customer-user.interfa
 import {
   SUPPORT_DEFAULT_SLA_MINUTES,
   type SupportAssigneeType,
-  type SupportMessageAuthorType,
   type SupportTicketPriority,
   type SupportTicketScope,
   type SupportTicketStatus,
@@ -661,7 +660,7 @@ export class SupportService {
         recipientStoreUserId: null,
         recipientCustomerId: null,
         type: 'support.ticket.updated',
-        title: `Platform replied: ${ticket.subject}`,
+        title: `Support replied: ${ticket.subject}`,
         body: message.message.slice(0, 300),
         actionUrl: `/merchant?tab=supportTickets&ticketId=${encodeURIComponent(ticket.id)}`,
         metadata: { ticketId: ticket.id },

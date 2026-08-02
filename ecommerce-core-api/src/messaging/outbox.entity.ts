@@ -1,4 +1,4 @@
-export type OutboxStatus = 'pending' | 'published' | 'failed';
+export type OutboxStatus = 'pending' | 'processing' | 'published' | 'failed';
 
 export interface OutboxEvent {
   id: string;
@@ -9,9 +9,12 @@ export interface OutboxEvent {
   headers: Record<string, string>;
   status: OutboxStatus;
   attemptCount: number;
-  availableAt: Date;
+  nextAttemptAt: Date;
+  lockedAt: Date | null;
+  lockedBy: string | null;
   createdAt: Date;
   updatedAt: Date;
-  publishedAt?: Date | null;
-  lastError?: string | null;
+  publishedAt: Date | null;
+  lastError: string | null;
+  deduplicationKey: string;
 }

@@ -201,21 +201,58 @@ export class InventoryRepository {
     }
   }
 
-  async releaseExpiredReservations(db: Queryable, storeId: string): Promise<number> {
-    const result = await db.query(
-      `
-        UPDATE inventory_reservations
-        SET status = 'released',
-            released_at = NOW(),
-            release_reason = 'expired',
-            updated_at = NOW()
-        WHERE store_id = $1
-          AND status = 'reserved'
-          AND expires_at <= NOW()
-      `,
-      [storeId],
+  async releaseExpiredReservations(
+    db: Queryable,
+    storeId: string,
+    limit = 100,
+  ): Promise<number> {
+    const claimed = await db.query<{
+      id: string;
+      order_id: string;
+      variant_id: string;
+      warehouse_id: string;
+      quantity: number;
+    }>(
+      `WITH candidates AS (
+         SELECT id
+         FROM inventory_reservations
+         WHERE store_id = $1 AND status = 'active' AND expires_at <= NOW()
+         ORDER BY expires_at ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT $2
+       )
+       UPDATE inventory_reservations reservation
+       SET status = 'expired', released_at = NOW(), release_reason = 'expired', updated_at = NOW()
+       FROM candidates
+       WHERE reservation.id = candidates.id
+       RETURNING reservation.id, reservation.order_id, reservation.variant_id, reservation.warehouse_id,
+                 reservation.quantity`,
+      [storeId, limit],
     );
-    return result.rowCount ?? 0;
+    for (const row of claimed.rows) {
+      await db.query(
+        `INSERT INTO inventory_reservation_events (
+          id,reservation_id,store_id,order_id,variant_id,warehouse_id,event_type,quantity,
+          from_status,to_status,actor_id,actor_type,reason_code,business_key)
+         VALUES ($1,$2,$3,$4,$5,$6,'expired',$7,'active','expired',NULL,'worker','ttl_expired',$8)
+         ON CONFLICT (store_id,business_key) DO NOTHING`,
+        [uuidv4(),row.id,storeId,row.order_id,row.variant_id,row.warehouse_id,row.quantity,
+          `reservation:${row.id}:expire`]);
+      await this.decrementWarehouseReservation(db, storeId, row.variant_id, row.warehouse_id, row.quantity);
+      await this.createMovement(db, {
+        storeId,
+        variantId: row.variant_id,
+        orderId: null,
+        movementType: 'adjustment',
+        qtyDelta: row.quantity,
+        note: 'Inventory reservation expired',
+        metadata: { source: 'reservation.expired', reservationId: row.id },
+        createdBy: null,
+        warehouseId: row.warehouse_id,
+        movementKey: `reservation:${row.id}:expire`,
+      });
+    }
+    return claimed.rows.length;
   }
 
   async reserveVariant(
@@ -230,28 +267,41 @@ export class InventoryRepository {
       metadata?: Record<string, unknown>;
     },
   ): Promise<boolean> {
-    const variantStock = await this.findLockedVariantStock(db, input.storeId, input.variantId);
-    if (variantStock === null) {
-      return false;
-    }
-
-    const reservedQuantity = await this.sumActiveReservedQuantity(
-      db,
-      input.storeId,
-      input.variantId,
-      input.orderId,
+    const existing = await db.query<{ id: string; quantity: number; status: string }>(
+      `SELECT id, quantity, status FROM inventory_reservations
+       WHERE store_id = $1 AND order_id = $2 AND variant_id = $3
+       FOR UPDATE`,
+      [input.storeId, input.orderId, input.variantId],
     );
-    const availableQuantity = variantStock - reservedQuantity;
-
-    if (availableQuantity < input.quantity) {
-      return false;
+    if (existing.rows[0]) {
+      return existing.rows[0].status === 'active' && existing.rows[0].quantity === input.quantity;
     }
 
-    const insertResult = await this.upsertReservation(db, {
-      ...input,
-      warehouseId: input.warehouseId,
-    });
+    const warehouse = await db.query<{ warehouse_id: string }>(
+      `WITH candidate AS (
+         SELECT wi.warehouse_id
+         FROM warehouse_inventory wi
+         INNER JOIN warehouses w ON w.id = wi.warehouse_id
+         WHERE wi.store_id = $1 AND wi.variant_id = $2 AND w.is_active = TRUE
+           AND wi.quantity - wi.reserved_quantity >= $3
+           AND ($4::uuid IS NULL OR wi.warehouse_id = $4)
+         ORDER BY w.is_default DESC, w.priority DESC, w.created_at ASC
+         FOR UPDATE OF wi
+         LIMIT 1
+       )
+       UPDATE warehouse_inventory wi
+       SET reserved_quantity = wi.reserved_quantity + $3, updated_at = NOW()
+       FROM candidate
+       WHERE wi.store_id = $1 AND wi.variant_id = $2
+         AND wi.warehouse_id = candidate.warehouse_id
+         AND wi.quantity - wi.reserved_quantity >= $3
+       RETURNING wi.warehouse_id`,
+      [input.storeId, input.variantId, input.quantity, input.warehouseId ?? null],
+    );
+    const warehouseId = warehouse.rows[0]?.warehouse_id;
+    if (!warehouseId) return false;
 
+    const insertResult = await this.upsertReservation(db, { ...input, warehouseId });
     return (insertResult.rowCount ?? 0) > 0;
   }
 
@@ -264,23 +314,47 @@ export class InventoryRepository {
       quantity: number;
     },
   ): Promise<boolean> {
-    const result = await db.query(
-      `
-        UPDATE inventory_reservations
-        SET status = 'consumed',
-            consumed_at = NOW(),
-            updated_at = NOW()
-        WHERE store_id = $1
-          AND order_id = $2
-          AND variant_id = $3
-          AND status = 'reserved'
-          AND expires_at > NOW()
-          AND quantity = $4
-      `,
+    const current = await db.query<{ status: string; quantity: number }>(
+      `SELECT status, quantity FROM inventory_reservations
+       WHERE store_id = $1 AND order_id = $2 AND variant_id = $3
+       FOR UPDATE`,
+      [input.storeId, input.orderId, input.variantId],
+    );
+    if (current.rows[0]?.status === 'consumed') {
+      return current.rows[0].quantity === input.quantity;
+    }
+    const result = await db.query<{ id: string; warehouse_id: string; quantity: number }>(
+      `UPDATE inventory_reservations
+       SET status = 'consumed', consumed_at = NOW(), updated_at = NOW()
+       WHERE store_id = $1 AND order_id = $2 AND variant_id = $3
+         AND status = 'active' AND expires_at > NOW() AND quantity = $4
+       RETURNING id, warehouse_id, quantity`,
       [input.storeId, input.orderId, input.variantId, input.quantity],
     );
-
-    return (result.rowCount ?? 0) > 0;
+    const reservation = result.rows[0];
+    if (!reservation) return false;
+    const stock = await db.query(
+      `UPDATE warehouse_inventory
+       SET quantity = quantity - $4, reserved_quantity = reserved_quantity - $4, updated_at = NOW()
+       WHERE store_id = $1 AND variant_id = $2 AND warehouse_id = $3
+         AND quantity >= $4 AND reserved_quantity >= $4`,
+      [input.storeId, input.variantId, reservation.warehouse_id, reservation.quantity],
+    );
+    if ((stock.rowCount ?? 0) !== 1) throw new Error('Inventory reservation counter drift detected');
+    await this.createMovement(db, {
+      storeId: input.storeId,
+      variantId: input.variantId,
+      orderId: input.orderId,
+      movementType: 'sale',
+      qtyDelta: -reservation.quantity,
+      note: 'Stock deducted on reservation consumption',
+      metadata: { source: 'reservation.consume', reservationId: reservation.id },
+      createdBy: null,
+      warehouseId: reservation.warehouse_id,
+      movementKey: `reservation:${reservation.id}:consume`,
+    });
+    await this.syncVariantStockFromWarehouses(db, input.storeId, input.variantId);
+    return true;
   }
 
   async releaseOrderReservations(
@@ -291,21 +365,36 @@ export class InventoryRepository {
       reason: string;
     },
   ): Promise<number> {
-    const result = await db.query(
-      `
-        UPDATE inventory_reservations
-        SET status = 'released',
-            released_at = NOW(),
-            release_reason = $3,
-            updated_at = NOW()
-        WHERE store_id = $1
-          AND order_id = $2
-          AND status = 'reserved'
-      `,
+    const result = await db.query<{
+      id: string;
+      variant_id: string;
+      warehouse_id: string;
+      quantity: number;
+    }>(
+      `UPDATE inventory_reservations
+       SET status = 'released', released_at = NOW(), release_reason = $3, updated_at = NOW()
+       WHERE store_id = $1 AND order_id = $2 AND status = 'active'
+       RETURNING id, variant_id, warehouse_id, quantity`,
       [input.storeId, input.orderId, input.reason],
     );
-
-    return result.rowCount ?? 0;
+    for (const row of result.rows) {
+      await this.decrementWarehouseReservation(
+        db, input.storeId, row.variant_id, row.warehouse_id, row.quantity,
+      );
+      await this.createMovement(db, {
+        storeId: input.storeId,
+        variantId: row.variant_id,
+        orderId: input.orderId,
+        movementType: 'adjustment',
+        qtyDelta: row.quantity,
+        note: `Reservation released: ${input.reason}`,
+        metadata: { source: 'reservation.release', reservationId: row.id },
+        createdBy: null,
+        warehouseId: row.warehouse_id,
+        movementKey: `reservation:${row.id}:release`,
+      });
+    }
+    return result.rows.length;
   }
 
   async listReservedVariantsForOrder(
@@ -325,7 +414,7 @@ export class InventoryRepository {
         INNER JOIN product_variants pv ON pv.id = ir.variant_id
         WHERE ir.store_id = $1
           AND ir.order_id = $2
-          AND ir.status = 'reserved'
+          AND ir.status = 'active'
           AND ir.expires_at > NOW()
       `,
       [storeId, orderId],
@@ -624,6 +713,7 @@ export class InventoryRepository {
       metadata?: Record<string, unknown>;
       createdBy: string | null;
       warehouseId?: string | null;
+      movementKey?: string;
     },
   ): Promise<void> {
     await db.query(
@@ -638,9 +728,11 @@ export class InventoryRepository {
           qty_delta,
           note,
           metadata,
-          created_by
+          created_by,
+          movement_key
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11)
+        ON CONFLICT (store_id, movement_key) DO NOTHING
       `,
       [
         uuidv4(),
@@ -653,6 +745,7 @@ export class InventoryRepository {
         input.note,
         JSON.stringify(input.metadata ?? {}),
         input.createdBy,
+        input.movementKey ?? `movement:${uuidv4()}`,
       ],
     );
   }
@@ -680,7 +773,7 @@ export class InventoryRepository {
           SELECT variant_id, SUM(quantity)::int AS reserved_quantity
           FROM inventory_reservations
           WHERE store_id = $1
-            AND status = 'reserved'
+            AND status = 'active'
             AND expires_at > NOW()
           GROUP BY variant_id
         ) active ON active.variant_id = pv.id
@@ -784,7 +877,7 @@ export class InventoryRepository {
           SELECT variant_id, SUM(quantity)::int AS reserved_quantity
           FROM inventory_reservations
           WHERE store_id = $1
-            AND status = 'reserved'
+            AND status = 'active'
             AND expires_at > NOW()
           GROUP BY variant_id
         ) active ON active.variant_id = pv.id
@@ -830,7 +923,7 @@ export class InventoryRepository {
         FROM inventory_reservations
         WHERE store_id = $1
           AND variant_id = $2
-          AND status = 'reserved'
+          AND status = 'active'
           AND expires_at > NOW()
           AND ($3::uuid IS NULL OR order_id <> $3)
       `,
@@ -887,6 +980,41 @@ export class InventoryRepository {
     );
   }
 
+  async findVariantAvailableQuantityInTransaction(
+    db: Queryable,
+    storeId: string,
+    variantId: string,
+  ): Promise<number | null> {
+    const result = await db.query<{ available_quantity: string | null }>(
+      `SELECT SUM(wi.quantity - wi.reserved_quantity)::text AS available_quantity
+       FROM warehouse_inventory wi
+       INNER JOIN warehouses w ON w.id = wi.warehouse_id
+       WHERE wi.store_id = $1 AND wi.variant_id = $2 AND w.is_active = TRUE`,
+      [storeId, variantId],
+    );
+    const value = result.rows[0]?.available_quantity;
+    return value === null || value === undefined ? null : Number(value);
+  }
+
+  private async decrementWarehouseReservation(
+    db: Queryable,
+    storeId: string,
+    variantId: string,
+    warehouseId: string,
+    quantity: number,
+  ): Promise<void> {
+    const result = await db.query(
+      `UPDATE warehouse_inventory
+       SET reserved_quantity = reserved_quantity - $4, updated_at = NOW()
+       WHERE store_id = $1 AND variant_id = $2 AND warehouse_id = $3
+         AND reserved_quantity >= $4`,
+      [storeId, variantId, warehouseId, quantity],
+    );
+    if ((result.rowCount ?? 0) !== 1) {
+      throw new Error('Inventory reserved_quantity reconciliation failed');
+    }
+  }
+
   async updateWarehouseInventoryQuantityDelta(
     db: Queryable,
     input: {
@@ -937,12 +1065,12 @@ export class InventoryRepository {
           metadata,
           updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, 'reserved', NOW(), $7, $8::jsonb, NOW())
-        ON CONFLICT (store_id, order_id, variant_id)
+        VALUES ($1, $2, $3, $4, $5, $6, 'active', NOW(), $7, $8::jsonb, NOW())
+        ON CONFLICT (store_id, order_id, variant_id) WHERE order_id IS NOT NULL
         DO UPDATE SET
           quantity = EXCLUDED.quantity,
           warehouse_id = COALESCE(EXCLUDED.warehouse_id, inventory_reservations.warehouse_id),
-          status = 'reserved',
+          status = 'active',
           reserved_at = NOW(),
           expires_at = EXCLUDED.expires_at,
           released_at = NULL,

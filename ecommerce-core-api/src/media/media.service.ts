@@ -3,7 +3,6 @@ import {
   Inject,
   Injectable,
   NotFoundException,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
@@ -11,7 +10,6 @@ import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import type { RequestContextData } from '../common/utils/request-context.util';
 import { OutboxService } from '../messaging/outbox.service';
-import { StoreCapabilitiesService } from '../store-capabilities/store-capabilities.service';
 import { ALLOWED_UPLOAD_MIME_TYPES, MAX_UPLOAD_BYTES } from './media.constants';
 import type { ConfirmMediaUploadDto } from './dto/confirm-media-upload.dto';
 import type { PresignMediaUploadDto } from './dto/presign-media-upload.dto';
@@ -71,7 +69,6 @@ export class MediaService {
     private readonly outboxService: OutboxService,
     private readonly auditService: AuditService,
     @Inject(STORAGE_ADAPTER) private readonly storageAdapter: StorageAdapter,
-    private readonly storeCapabilitiesService: StoreCapabilitiesService,
   ) {}
 
   async createPresignedUpload(
@@ -116,8 +113,6 @@ export class MediaService {
     }
 
     const confirmedObject = await this.confirmStorageObject(input);
-    await this.assertStorageLimit(currentUser.storeId, confirmedObject.fileSizeBytes);
-
     const asset = await this.createMediaAsset(currentUser, input, confirmedObject);
     await this.enqueueMediaUploadedEvent(asset, context);
     await this.logMediaUploadedAudit(currentUser, asset.id, context);
@@ -188,7 +183,6 @@ export class MediaService {
     if (!confirmedObject.mimeType.startsWith('image/')) {
       throw new BadRequestException('يجب أن يكون الإيصال صورة.');
     }
-    await this.assertStorageLimit(storeId, confirmedObject.fileSizeBytes);
     const asset = await this.mediaRepository.create({
       storeId,
       uploadedBy: null,
@@ -282,24 +276,6 @@ export class MediaService {
   private validateFileSize(fileSizeBytes: number): void {
     if (fileSizeBytes <= 0 || fileSizeBytes > MAX_UPLOAD_BYTES) {
       throw new BadRequestException(`File size must be between 1 and ${MAX_UPLOAD_BYTES} bytes`);
-    }
-  }
-
-  private async assertStorageLimit(storeId: string, additionalBytes: number): Promise<void> {
-    const additionalMb = Math.ceil(additionalBytes / (1024 * 1024));
-    try {
-      await this.storeCapabilitiesService.assertMetricCanGrow(
-        storeId,
-        'storage.used',
-        additionalMb,
-      );
-    } catch (error) {
-      if (error instanceof UnprocessableEntityException) {
-        throw new UnprocessableEntityException(
-          'Storage limit reached. Please upgrade your plan to upload more files.',
-        );
-      }
-      throw error;
     }
   }
 
@@ -441,7 +417,7 @@ export class MediaService {
     asset: MediaAssetRecord,
     context: RequestContextData,
   ): Promise<void> {
-    await this.outboxService.enqueue({
+    await this.outboxService.enqueueStandalone({
       aggregateType: 'media_asset',
       aggregateId: asset.id,
       eventType: 'media.uploaded',

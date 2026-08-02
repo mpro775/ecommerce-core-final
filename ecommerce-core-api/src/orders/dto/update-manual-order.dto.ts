@@ -7,11 +7,17 @@ import {
   IsUUID,
   MaxLength,
   ValidateNested,
+  IsInt,
+  Min,
 } from 'class-validator';
 import { PAYMENT_METHODS, type PaymentMethod } from '../constants/payment.constants';
 import { ManualOrderLineDto } from './create-manual-order.dto';
 
 export class UpdateManualOrderDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  expectedVersion!: number;
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
@@ -72,4 +78,9 @@ export class UpdateManualOrderDto {
   @IsString()
   @MaxLength(120)
   area?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  priceOverrideReason?: string;
 }

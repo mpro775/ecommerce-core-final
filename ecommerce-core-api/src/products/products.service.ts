@@ -16,7 +16,6 @@ import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { CategoriesRepository } from '../categories/categories.repository';
 import type { RequestContextData } from '../common/utils/request-context.util';
 import { slugify } from '../common/utils/slug.util';
-import { StoreCapabilitiesService } from '../store-capabilities/store-capabilities.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { WarehousesService } from '../warehouses/warehouses.service';
 import { FiltersRepository } from '../filters/filters.repository';
@@ -177,7 +176,6 @@ export class ProductsService {
     private readonly attributesService: AttributesService,
     private readonly filtersRepository: FiltersRepository,
     private readonly auditService: AuditService,
-    private readonly storeCapabilitiesService: StoreCapabilitiesService,
     private readonly webhooksService: WebhooksService,
     private readonly warehousesService: WarehousesService,
     private readonly brandsRepository: BrandsRepository,
@@ -189,12 +187,6 @@ export class ProductsService {
     input: CreateProductDto,
     context: RequestContextData,
   ): Promise<ProductResponse> {
-    await this.storeCapabilitiesService.assertMetricCanGrow(
-      currentUser.storeId,
-      'products.total',
-      1,
-    );
-
     const primaryArabicTitle = this.resolvePrimaryArabicTitle(input.title, input.titleAr);
     const slug = this.resolveSlug(primaryArabicTitle, input.slug);
     await this.ensureProductSlugAvailable(currentUser.storeId, slug);

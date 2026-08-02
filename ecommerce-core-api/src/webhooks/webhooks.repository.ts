@@ -27,11 +27,16 @@ export interface WebhookDeliveryRecord {
   response_status: number | null;
   response_body: string | null;
   response_headers: Record<string, unknown> | null;
-  attempt_number: number;
+  status: 'pending' | 'processing' | 'delivered' | 'failed';
+  attempt_count: number;
   delivered_at: Date | null;
-  next_retry_at: Date | null;
-  error_message: string | null;
+  next_attempt_at: Date | null;
+  locked_at: Date | null;
+  locked_by: string | null;
+  last_error: string | null;
   created_at: Date;
+  updated_at: Date;
+  source_outbox_event_id: string | null;
 }
 
 export interface WebhookDeliveryWithEndpointRecord extends WebhookDeliveryRecord {
@@ -180,7 +185,8 @@ export class WebhooksRepository {
     return result.rows;
   }
 
-  async createDelivery(input: {
+  async createOrGetDeliveryFromOutbox(input: {
+    sourceOutboxId: string;
     storeId: string;
     endpointId: string;
     eventType: string;
@@ -189,38 +195,88 @@ export class WebhooksRepository {
     requestHeaders: Record<string, unknown>;
   }): Promise<WebhookDeliveryRecord> {
     const result = await this.databaseService.db.query<WebhookDeliveryRecord>(
-      `
-        INSERT INTO webhook_deliveries (
-          id,
-          store_id,
-          endpoint_id,
-          event_type,
-          payload,
-          signature,
-          request_headers,
-          attempt_number
-        ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, 1)
-        RETURNING id, store_id, endpoint_id, event_type, payload, signature, request_headers,
-                  response_status, response_body, response_headers, attempt_number,
-                  delivered_at, next_retry_at, error_message, created_at
-      `,
-      [
-        uuidv4(),
-        input.storeId,
-        input.endpointId,
-        input.eventType,
-        JSON.stringify(input.payload),
-        input.signature,
-        JSON.stringify(input.requestHeaders),
-      ],
+      `INSERT INTO webhook_deliveries (
+         id, store_id, endpoint_id, event_type, payload, signature, request_headers,
+         status, attempt_count, next_attempt_at, source_outbox_event_id
+       ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, 'pending', 0, NOW(), $8)
+       ON CONFLICT (endpoint_id, source_outbox_event_id)
+         WHERE source_outbox_event_id IS NOT NULL
+       DO UPDATE SET
+         next_attempt_at = CASE
+           WHEN webhook_deliveries.status IN ('pending', 'failed')
+             THEN LEAST(COALESCE(webhook_deliveries.next_attempt_at, NOW()), NOW())
+           ELSE webhook_deliveries.next_attempt_at
+         END,
+         updated_at = NOW()
+       RETURNING id, store_id, endpoint_id, event_type, payload, signature, request_headers,
+                 response_status, response_body, response_headers, status, attempt_count,
+                 delivered_at, next_attempt_at, locked_at, locked_by, last_error,
+                 created_at, updated_at, source_outbox_event_id`,
+      [uuidv4(), input.storeId, input.endpointId, input.eventType, JSON.stringify(input.payload),
+       input.signature, JSON.stringify(input.requestHeaders), input.sourceOutboxId],
     );
-
     return result.rows[0] as WebhookDeliveryRecord;
+  }
+
+  async claimDueDeliveries(limit: number, workerId: string): Promise<WebhookDeliveryWithEndpointRecord[]> {
+    const client = await this.databaseService.db.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query<WebhookDeliveryWithEndpointRecord>(
+        `WITH candidates AS (
+           SELECT d.id
+           FROM webhook_deliveries d
+           JOIN webhook_endpoints e ON e.id = d.endpoint_id AND e.is_active = TRUE
+           WHERE d.status IN ('pending', 'failed')
+             AND d.next_attempt_at IS NOT NULL
+             AND d.next_attempt_at <= NOW()
+           ORDER BY d.next_attempt_at, d.created_at
+           FOR UPDATE OF d SKIP LOCKED
+           LIMIT $1
+         ), claimed AS (
+           UPDATE webhook_deliveries d
+           SET status = 'processing', locked_at = NOW(), locked_by = $2,
+               attempt_count = attempt_count + 1, updated_at = NOW()
+           FROM candidates c
+           WHERE d.id = c.id
+           RETURNING d.*
+         )
+         SELECT c.id, c.store_id, c.endpoint_id, c.event_type, c.payload, c.signature,
+                c.request_headers, c.response_status, c.response_body, c.response_headers,
+                c.status, c.attempt_count, c.delivered_at, c.next_attempt_at,
+                c.locked_at, c.locked_by, c.last_error, c.created_at, c.updated_at,
+                c.source_outbox_event_id, e.url AS endpoint_url,
+                e.secret_key AS endpoint_secret_key
+         FROM claimed c
+         JOIN webhook_endpoints e ON e.id = c.endpoint_id`,
+        [limit, workerId],
+      );
+      await client.query('COMMIT');
+      return result.rows;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async recoverStaleProcessing(timeoutSeconds: number): Promise<number> {
+    const result = await this.databaseService.db.query(
+      `UPDATE webhook_deliveries
+       SET status = 'pending', next_attempt_at = NOW(), locked_at = NULL, locked_by = NULL,
+           last_error = COALESCE(last_error, 'stale processing lock recovered'), updated_at = NOW()
+       WHERE status = 'processing'
+         AND locked_at < NOW() - ($1::int * INTERVAL '1 second')`,
+      [timeoutSeconds],
+    );
+    return result.rowCount ?? 0;
   }
 
   async markDeliverySuccess(input: {
     deliveryId: string;
     endpointId: string;
+    workerId: string;
     responseStatus: number;
     responseBody: string | null;
     responseHeaders: Record<string, unknown>;
@@ -228,19 +284,19 @@ export class WebhooksRepository {
     await this.databaseService.db.query(
       `
         UPDATE webhook_deliveries
-        SET delivered_at = NOW(),
-            next_retry_at = NULL,
+        SET status = 'delivered', delivered_at = NOW(),
+            next_attempt_at = NULL, locked_at = NULL, locked_by = NULL,
             response_status = $2,
             response_body = $3,
             response_headers = $4::jsonb,
-            error_message = NULL
-        WHERE id = $1
+            last_error = NULL, updated_at = NOW()
+        WHERE id = $1 AND status = 'processing' AND locked_by = $5
       `,
       [
         input.deliveryId,
         input.responseStatus,
         input.responseBody,
-        JSON.stringify(input.responseHeaders),
+        JSON.stringify(input.responseHeaders), input.workerId,
       ],
     );
 
@@ -259,23 +315,27 @@ export class WebhooksRepository {
   async markDeliveryFailure(input: {
     deliveryId: string;
     endpointId: string;
+    workerId: string;
     responseStatus: number | null;
     responseBody: string | null;
     responseHeaders: Record<string, unknown> | null;
     errorMessage: string;
-    nextRetryAt: Date | null;
-    nextAttemptNumber: number;
+    nextAttemptAt: Date | null;
+    terminal: boolean;
   }): Promise<void> {
     await this.databaseService.db.query(
       `
         UPDATE webhook_deliveries
-        SET response_status = $2,
+        SET status = $7,
+            response_status = $2,
             response_body = $3,
             response_headers = $4::jsonb,
-            error_message = $5,
-            next_retry_at = $6,
-            attempt_number = $7
-        WHERE id = $1
+            last_error = LEFT($5, 1000),
+            next_attempt_at = $6,
+            locked_at = NULL,
+            locked_by = NULL,
+            updated_at = NOW()
+        WHERE id = $1 AND status = 'processing' AND locked_by = $8
       `,
       [
         input.deliveryId,
@@ -283,8 +343,9 @@ export class WebhooksRepository {
         input.responseBody,
         JSON.stringify(input.responseHeaders ?? {}),
         input.errorMessage,
-        input.nextRetryAt,
-        input.nextAttemptNumber,
+        input.nextAttemptAt,
+        input.terminal ? 'failed' : 'pending',
+        input.workerId,
       ],
     );
 
@@ -315,11 +376,16 @@ export class WebhooksRepository {
                d.response_status,
                d.response_body,
                d.response_headers,
-               d.attempt_number,
+               d.status,
+               d.attempt_count,
                d.delivered_at,
-               d.next_retry_at,
-               d.error_message,
+               d.next_attempt_at,
+               d.locked_at,
+               d.locked_by,
+               d.last_error,
                d.created_at,
+               d.updated_at,
+               d.source_outbox_event_id,
                e.url AS endpoint_url,
                e.secret_key AS endpoint_secret_key
         FROM webhook_deliveries d
@@ -357,15 +423,15 @@ export class WebhooksRepository {
     }
 
     if (input.status === 'success') {
-      where.push('delivered_at IS NOT NULL');
+      where.push(`status = 'delivered'`);
     }
 
     if (input.status === 'failed') {
-      where.push('delivered_at IS NULL AND next_retry_at IS NULL AND error_message IS NOT NULL');
+      where.push(`status = 'failed'`);
     }
 
     if (input.status === 'pending') {
-      where.push('delivered_at IS NULL AND next_retry_at IS NOT NULL');
+      where.push(`status IN ('pending', 'processing')`);
     }
 
     values.push(input.limit);
@@ -377,8 +443,9 @@ export class WebhooksRepository {
       this.databaseService.db.query<WebhookDeliveryRecord>(
         `
           SELECT id, store_id, endpoint_id, event_type, payload, signature, request_headers,
-                 response_status, response_body, response_headers, attempt_number,
-                 delivered_at, next_retry_at, error_message, created_at
+                 response_status, response_body, response_headers, status, attempt_count,
+                 delivered_at, next_attempt_at, locked_at, locked_by, last_error,
+                 created_at, updated_at, source_outbox_event_id
           FROM webhook_deliveries
           WHERE ${whereClause}
           ORDER BY created_at DESC
@@ -403,39 +470,18 @@ export class WebhooksRepository {
     };
   }
 
-  async listPendingRetries(limit: number): Promise<WebhookDeliveryWithEndpointRecord[]> {
-    const result = await this.databaseService.db.query<WebhookDeliveryWithEndpointRecord>(
-      `
-        SELECT d.id,
-               d.store_id,
-               d.endpoint_id,
-               d.event_type,
-               d.payload,
-               d.signature,
-               d.request_headers,
-               d.response_status,
-               d.response_body,
-               d.response_headers,
-               d.attempt_number,
-               d.delivered_at,
-               d.next_retry_at,
-               d.error_message,
-               d.created_at,
-               e.url AS endpoint_url,
-               e.secret_key AS endpoint_secret_key
-        FROM webhook_deliveries d
-        INNER JOIN webhook_endpoints e
-          ON e.id = d.endpoint_id
-        WHERE d.delivered_at IS NULL
-          AND d.next_retry_at IS NOT NULL
-          AND d.next_retry_at <= NOW()
-          AND e.is_active = TRUE
-        ORDER BY d.next_retry_at ASC
-        LIMIT $1
-      `,
-      [limit],
+  async scheduleRetry(storeId: string, deliveryId: string): Promise<WebhookDeliveryRecord | null> {
+    const result = await this.databaseService.db.query<WebhookDeliveryRecord>(
+      `UPDATE webhook_deliveries
+       SET status = 'pending', next_attempt_at = NOW(), locked_at = NULL, locked_by = NULL,
+           updated_at = NOW()
+       WHERE store_id = $1 AND id = $2 AND status <> 'delivered'
+       RETURNING id, store_id, endpoint_id, event_type, payload, signature, request_headers,
+                 response_status, response_body, response_headers, status, attempt_count,
+                 delivered_at, next_attempt_at, locked_at, locked_by, last_error,
+                 created_at, updated_at, source_outbox_event_id`,
+      [storeId, deliveryId],
     );
-
-    return result.rows;
+    return result.rows[0] ?? null;
   }
 }

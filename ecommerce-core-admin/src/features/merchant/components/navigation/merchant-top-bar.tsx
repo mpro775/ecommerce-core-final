@@ -14,7 +14,6 @@ import {
   Avatar,
   Badge,
   Box,
-  Button,
   Divider,
   IconButton,
   ListItemIcon,
@@ -37,7 +36,6 @@ interface MerchantTopBarProps {
   session: MerchantSession;
 
   storeName?: string | null;
-  storeLogoUrl?: string | null;
   themeMode: 'light' | 'dark';
   showNavigationToggle: boolean;
   userMenuAnchorEl: HTMLElement | null;
@@ -61,7 +59,6 @@ export function MerchantTopBar({
   session,
 
   storeName,
-  storeLogoUrl,
   themeMode,
   showNavigationToggle,
   userMenuAnchorEl,
@@ -88,7 +85,7 @@ export function MerchantTopBar({
     ? alpha(theme.palette.common.white, 0.07)
     : alpha(theme.palette.primary.main, 0.08);
   const resolvedStoreName = storeName?.trim() || 'متجرك';
-  const resolvedLogoSrc = storeLogoUrl?.trim() || ecommerce_core_ICON_SRC;
+  const resolvedLogoSrc = ecommerce_core_ICON_SRC;
 
   function handleToggleThemeMode(event: MouseEvent<HTMLButtonElement>): void {
     const rect = event.currentTarget.getBoundingClientRect();

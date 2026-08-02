@@ -5,11 +5,12 @@ import { PaymentsController } from './payments.controller';
 import { PaymentsRepository } from './payments.repository';
 import { PaymentsService } from './payments.service';
 import { AffiliatesModule } from '../affiliates/affiliates.module';
+import { PaymentTransitionService } from './payment-transition.service';
 
 @Module({
   imports: [SecurityModule, MediaModule, AffiliatesModule],
   controllers: [PaymentsController],
-  providers: [PaymentsService, PaymentsRepository],
-  exports: [PaymentsService, PaymentsRepository],
+  providers: [PaymentsService, PaymentsRepository, PaymentTransitionService],
+  exports: [PaymentsService, PaymentsRepository, PaymentTransitionService],
 })
 export class PaymentsModule {}

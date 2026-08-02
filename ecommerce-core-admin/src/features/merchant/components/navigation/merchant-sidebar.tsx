@@ -23,7 +23,6 @@ interface MerchantSidebarProps {
   isDesktop: boolean;
   mobileOpen: boolean;
   storeName?: string | null;
-  storeLogoUrl?: string | null;
   onCloseMobile: () => void;
   onSelectTab: (tab: MerchantTabKey) => void;
 }
@@ -37,7 +36,6 @@ export function MerchantSidebar({
   isDesktop,
   mobileOpen,
   storeName,
-  storeLogoUrl,
   onCloseMobile,
   onSelectTab,
 }: MerchantSidebarProps) {
@@ -57,7 +55,7 @@ export function MerchantSidebar({
     ? alpha(theme.palette.common.white, 0.045)
     : alpha(theme.palette.primary.main, 0.08);
   const resolvedStoreName = storeName?.trim() || 'متجرك';
-  const resolvedLogoSrc = storeLogoUrl?.trim() || ecommerce_core_ICON_SRC;
+  const resolvedLogoSrc = ecommerce_core_ICON_SRC;
   const activeRailColor = theme.palette.primary.main;
   const activeEdgeGlow = `linear-gradient(90deg, transparent 0%, ${alpha(
     theme.palette.primary.main,

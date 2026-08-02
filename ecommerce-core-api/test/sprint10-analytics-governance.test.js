@@ -126,15 +126,10 @@ function createAnalyticsService(overrides = {}, emittedEvents = []) {
         id: STORE_ID,
         name: 'Demo',
         slug: 'demo',
-        logo_url: null,
         phone: null,
         address: null,
         currency_code: 'SAR',
         timezone: 'Asia/Riyadh',
-        shipping_policy: null,
-        return_policy: null,
-        privacy_policy: null,
-        terms_of_service: null,
       };
     },
   };

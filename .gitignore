@@ -19,5 +19,6 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Logs
+# Logs  
 *.log
+.phase12-postgres

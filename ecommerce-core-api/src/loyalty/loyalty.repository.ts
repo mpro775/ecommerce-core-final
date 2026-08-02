@@ -53,6 +53,12 @@ export interface LoyaltyLedgerRecord {
   points_delta: number;
   amount_delta: string;
   balance_after: number;
+  balance_before: number;
+  status: 'pending' | 'available' | 'reversed';
+  business_key: string;
+  source_ledger_id: string | null;
+  available_at: Date | null;
+  reversed_at: Date | null;
   reference_entry_id: string | null;
   reason: string | null;
   metadata: Record<string, unknown>;
@@ -132,13 +138,14 @@ export class LoyaltyRepository {
     return result.rows[0] as LoyaltyProgramRecord;
   }
 
-  async listEarnRules(storeId: string): Promise<LoyaltyEarnRuleRecord[]> {
-    const result = await this.databaseService.db.query<LoyaltyEarnRuleRecord>(
+  async listEarnRules(storeId: string, db?: Queryable): Promise<LoyaltyEarnRuleRecord[]> {
+    const result = await (db ?? this.databaseService.db).query<LoyaltyEarnRuleRecord>(
       `
         SELECT id, store_id, program_id, name, rule_type, earn_rate, min_order_amount, is_active, priority
         FROM loyalty_earn_rules
         WHERE store_id = $1
         ORDER BY priority ASC, created_at ASC
+        ${db ? 'FOR SHARE' : ''}
       `,
       [storeId],
     );
@@ -271,20 +278,31 @@ export class LoyaltyRepository {
       reason: string | null;
       metadata: Record<string, unknown>;
       createdByStoreUserId: string | null;
+      businessKey?: string;
+      status?: 'pending' | 'available' | 'reversed';
+      balanceBefore?: number;
+      availableAt?: Date | null;
+      sourceLedgerId?: string | null;
     },
   ): Promise<LoyaltyLedgerRecord> {
+    const id = uuidv4();
+    const businessKey = input.businessKey ?? `ledger:${id}`;
     const result = await db.query<LoyaltyLedgerRecord>(
       `
         INSERT INTO loyalty_ledger_entries (
           id, store_id, customer_id, wallet_id, order_id, entry_type, points_delta,
-          amount_delta, balance_after, reference_entry_id, reason, metadata, created_by_store_user_id
+          amount_delta, balance_after, reference_entry_id, reason, metadata, created_by_store_user_id,
+          status, balance_before, source_ledger_id, business_key, available_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13,
+                $14, $15, $16, $17, $18)
+        ON CONFLICT (store_id, business_key) DO NOTHING
         RETURNING id, store_id, customer_id, wallet_id, order_id, entry_type, points_delta, amount_delta,
-                  balance_after, reference_entry_id, reason, metadata, created_by_store_user_id, created_at
+                  balance_after, reference_entry_id, reason, metadata, created_by_store_user_id, created_at,
+                  status, balance_before, source_ledger_id, business_key, available_at, reversed_at
       `,
       [
-        uuidv4(),
+        id,
         input.storeId,
         input.customerId,
         input.walletId,
@@ -297,9 +315,42 @@ export class LoyaltyRepository {
         input.reason,
         JSON.stringify(input.metadata),
         input.createdByStoreUserId,
+        input.status ?? 'available',
+        input.balanceBefore ?? input.balanceAfter - input.pointsDelta,
+        input.sourceLedgerId ?? input.referenceEntryId,
+        businessKey,
+        input.availableAt ?? (input.status === 'pending' ? null : new Date()),
       ],
     );
-    return result.rows[0] as LoyaltyLedgerRecord;
+    if (result.rows[0]) return result.rows[0];
+    const existing = await db.query<LoyaltyLedgerRecord>(
+      `SELECT id, store_id, customer_id, wallet_id, order_id, entry_type, points_delta,
+              amount_delta, balance_after, reference_entry_id, reason, metadata,
+              created_by_store_user_id, created_at, status, balance_before, source_ledger_id,
+              business_key, available_at, reversed_at
+       FROM loyalty_ledger_entries WHERE store_id = $1 AND business_key = $2`,
+      [input.storeId, businessKey],
+    );
+    return existing.rows[0]!;
+  }
+
+  async activatePendingEarns(db: Queryable, limit = 100): Promise<LoyaltyLedgerRecord[]> {
+    const claimed = await db.query<LoyaltyLedgerRecord>(
+      `WITH candidates AS (
+         SELECT id FROM loyalty_ledger_entries
+         WHERE entry_type = 'earn' AND status = 'pending' AND available_at <= NOW()
+         ORDER BY available_at ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT $1
+       )
+       UPDATE loyalty_ledger_entries entry
+       SET status = 'available'
+       FROM candidates
+       WHERE entry.id = candidates.id
+       RETURNING entry.*`,
+      [limit],
+    );
+    return claimed.rows;
   }
 
   async listLedger(input: {
@@ -351,7 +402,8 @@ export class LoyaltyRepository {
     const result = await db.query<LoyaltyLedgerRecord>(
       `
         SELECT id, store_id, customer_id, wallet_id, order_id, entry_type, points_delta, amount_delta,
-               balance_after, reference_entry_id, reason, metadata, created_by_store_user_id, created_at
+               balance_after, reference_entry_id, reason, metadata, created_by_store_user_id, created_at,
+               status, balance_before, source_ledger_id, business_key, available_at, reversed_at
         FROM loyalty_ledger_entries
         WHERE store_id = $1
           AND order_id = $2
@@ -372,7 +424,8 @@ export class LoyaltyRepository {
     const result = await db.query<LoyaltyLedgerRecord>(
       `
         SELECT id, store_id, customer_id, wallet_id, order_id, entry_type, points_delta, amount_delta,
-               balance_after, reference_entry_id, reason, metadata, created_by_store_user_id, created_at
+               balance_after, reference_entry_id, reason, metadata, created_by_store_user_id, created_at,
+               status, balance_before, source_ledger_id, business_key, available_at, reversed_at
         FROM loyalty_ledger_entries
         WHERE store_id = $1
           AND order_id = $2
@@ -406,6 +459,7 @@ export class LoyaltyRepository {
   }
 
   async findOrderForLoyalty(
+    db: Queryable,
     storeId: string,
     orderId: string,
   ): Promise<{
@@ -420,7 +474,7 @@ export class LoyaltyRepository {
     points_discount_amount: string;
     points_earned: number;
   } | null> {
-    const result = await this.databaseService.db.query<{
+    const result = await db.query<{
       id: string;
       customer_id: string | null;
       status: string;
@@ -452,6 +506,7 @@ export class LoyaltyRepository {
       storeId: string;
       pointsRedeemed: number;
       pointsDiscountAmount: number;
+      pointsDiscountAmountYer?: number;
       pointsEarned?: number;
     },
   ): Promise<void> {
@@ -461,6 +516,7 @@ export class LoyaltyRepository {
         SET points_redeemed = $3,
             points_discount_amount = $4,
             points_earned = COALESCE($5, points_earned),
+            points_discount_amount_yer = COALESCE($6, points_discount_amount_yer),
             updated_at = NOW()
         WHERE id = $1
           AND store_id = $2
@@ -471,6 +527,7 @@ export class LoyaltyRepository {
         input.pointsRedeemed,
         input.pointsDiscountAmount,
         input.pointsEarned ?? null,
+        input.pointsDiscountAmountYer ?? null,
       ],
     );
   }

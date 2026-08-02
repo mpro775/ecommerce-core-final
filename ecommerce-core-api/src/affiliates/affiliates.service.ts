@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Request } from 'express';
 import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import type { RequestContextData } from '../common/utils/request-context.util';
+import { OutboxService } from '../messaging/outbox.service';
 import type {
   AffiliateAttributionType,
   AffiliateCommissionStatus,
@@ -15,7 +16,6 @@ import type { MarkAffiliatePayoutPaidDto } from './dto/mark-affiliate-payout-pai
 import type { UpdateAffiliateDto } from './dto/update-affiliate.dto';
 import type { UpdateAffiliateSettingsDto } from './dto/update-affiliate-settings.dto';
 import { AffiliatesRepository, type Queryable } from './affiliates.repository';
-import { StoreCapabilitiesService } from '../store-capabilities/store-capabilities.service';
 
 export interface AffiliateResponse {
   id: string;
@@ -88,7 +88,7 @@ export class AffiliatesService {
   constructor(
     private readonly affiliatesRepository: AffiliatesRepository,
     private readonly auditService: AuditService,
-    private readonly storeCapabilitiesService: StoreCapabilitiesService,
+    private readonly outboxService: OutboxService,
   ) {}
 
   async getSettings(currentUser: AuthUser): Promise<AffiliateSettingsResponse> {
@@ -418,12 +418,6 @@ export class AffiliatesService {
     request: Request,
     input: { storeId: string; sessionId: string },
   ): Promise<void> {
-    if (
-      !(await this.storeCapabilitiesService.isFeatureEnabled(input.storeId, 'affiliate_program'))
-    ) {
-      return;
-    }
-
     const affCode = this.readStringQuery(request, 'aff');
     if (!affCode) {
       return;
@@ -454,14 +448,9 @@ export class AffiliatesService {
     storeId: string;
     sessionId: string | null;
     couponCode?: string | null;
+    db?: Queryable;
   }): Promise<CheckoutAttributionResolution | null> {
-    if (
-      !(await this.storeCapabilitiesService.isFeatureEnabled(input.storeId, 'affiliate_program'))
-    ) {
-      return null;
-    }
-
-    const settings = await this.affiliatesRepository.getStoreSettings(input.storeId);
+    const settings = await this.affiliatesRepository.getStoreSettings(input.storeId, input.db);
     if (!settings.affiliate_enabled) {
       return null;
     }
@@ -471,6 +460,7 @@ export class AffiliatesService {
       const couponAttribution = await this.affiliatesRepository.resolveCouponAttribution(
         input.storeId,
         normalizedCoupon,
+        input.db,
       );
       if (couponAttribution) {
         return {
@@ -492,6 +482,7 @@ export class AffiliatesService {
       storeId: input.storeId,
       sessionId: input.sessionId,
       windowDays: settings.affiliate_attribution_window_days,
+      db: input.db,
     });
 
     if (!clickAttribution) {
@@ -535,9 +526,8 @@ export class AffiliatesService {
       return;
     }
 
-    const affiliate = await this.affiliatesRepository.findAffiliateById(
-      input.storeId,
-      input.attribution.affiliateId,
+    const affiliate = await this.affiliatesRepository.findAffiliateByIdInTransaction(
+      db, input.storeId, input.attribution.affiliateId,
     );
     if (!affiliate || affiliate.status !== 'active') {
       return;
@@ -550,7 +540,7 @@ export class AffiliatesService {
       ratePercent: rate,
     });
 
-    await this.affiliatesRepository.createOrderAttributionAndCommission(db, {
+    const commissionId = await this.affiliatesRepository.createOrderAttributionAndCommission(db, {
       storeId: input.storeId,
       orderId: input.orderId,
       affiliateId: input.attribution.affiliateId,
@@ -562,9 +552,19 @@ export class AffiliatesService {
       commissionRatePercent: rate,
       commissionBase: amounts.commissionBase,
       commissionAmount: amounts.commissionAmount,
+      returnWindowDays: this.affiliateReturnWindowDays(),
     });
+    if (commissionId) {
+      await this.outboxService.enqueueInTransaction(db, {
+        aggregateType: 'affiliate-commission', aggregateId: commissionId,
+        eventType: 'affiliate.commission_created',
+        deduplicationKey: `affiliate.commission_created:${commissionId}`,
+        payload: { storeId: input.storeId, orderId: input.orderId, commissionId,
+          affiliateId: input.attribution.affiliateId, commissionAmount: amounts.commissionAmount },
+      });
+    }
 
-    await this.affiliatesRepository.approveCommissionIfEligible(db, input.storeId, input.orderId);
+    await this.approveCommissionAndEmit(db, input.storeId, input.orderId);
   }
 
   async handleOrderStatusChangedInTransaction(
@@ -572,7 +572,7 @@ export class AffiliatesService {
     input: { storeId: string; orderId: string; nextStatus: string },
   ): Promise<void> {
     if (input.nextStatus === 'completed') {
-      await this.affiliatesRepository.approveCommissionIfEligible(db, input.storeId, input.orderId);
+      await this.approveCommissionAndEmit(db, input.storeId, input.orderId);
       return;
     }
 
@@ -590,22 +590,70 @@ export class AffiliatesService {
     orderId: string;
     nextStatus: string;
   }): Promise<void> {
-    await this.affiliatesRepository.withTransaction(async (db) => {
-      if (input.nextStatus === 'approved') {
-        await this.affiliatesRepository.approveCommissionIfEligible(
-          db,
-          input.storeId,
-          input.orderId,
-        );
-      }
-      if (input.nextStatus === 'refunded') {
-        await this.affiliatesRepository.reverseCommission(db, {
-          storeId: input.storeId,
-          orderId: input.orderId,
-          reason: 'payment_refunded',
+    await this.affiliatesRepository.withTransaction((db) =>
+      this.handlePaymentStatusChangedInTransaction(db, input),
+    );
+  }
+
+  async handlePaymentStatusChangedInTransaction(
+    db: Queryable,
+    input: { storeId: string; orderId: string; nextStatus: string },
+  ): Promise<void> {
+    if (input.nextStatus === 'approved') {
+      await this.approveCommissionAndEmit(db, input.storeId, input.orderId);
+    }
+    if (input.nextStatus === 'refunded' || input.nextStatus === 'rejected') {
+      await this.reverseCommissionAndEmit(db, {
+        storeId: input.storeId,
+        orderId: input.orderId,
+        reason: `payment_${input.nextStatus}`,
+      });
+    }
+  }
+
+  async advancePayableCommissions(): Promise<number> {
+    return this.affiliatesRepository.withTransaction(async (db) => {
+      const rows = await this.affiliatesRepository.markEligibleCommissionsPayable(db);
+      for (const row of rows) {
+        await this.outboxService.enqueueInTransaction(db, {
+          aggregateType: 'affiliate-commission', aggregateId: row.id,
+          eventType: 'affiliate.commission_payable',
+          deduplicationKey: `affiliate.commission_payable:${row.id}`,
+          payload: { storeId: row.store_id, orderId: row.order_id, commissionId: row.id },
         });
       }
+      return rows.length;
     });
+  }
+
+  private async approveCommissionAndEmit(db: Queryable, storeId: string, orderId: string) {
+    const commissionId = await this.affiliatesRepository.approveCommissionIfEligible(
+      db, storeId, orderId,
+    );
+    if (commissionId) await this.outboxService.enqueueInTransaction(db, {
+      aggregateType: 'affiliate-commission', aggregateId: commissionId,
+      eventType: 'affiliate.commission_approved',
+      deduplicationKey: `affiliate.commission_approved:${commissionId}`,
+      payload: { storeId, orderId, commissionId },
+    });
+  }
+
+  private async reverseCommissionAndEmit(
+    db: Queryable,
+    input: { storeId: string; orderId: string; reason: string },
+  ) {
+    const commissionId = await this.affiliatesRepository.reverseCommission(db, input);
+    if (commissionId) await this.outboxService.enqueueInTransaction(db, {
+      aggregateType: 'affiliate-commission', aggregateId: commissionId,
+      eventType: 'affiliate.commission_reversed',
+      deduplicationKey: `affiliate.commission_reversed:${commissionId}`,
+      payload: { ...input, commissionId },
+    });
+  }
+
+  private affiliateReturnWindowDays(): number {
+    const value = Number(process.env.AFFILIATE_RETURN_WINDOW_DAYS ?? 14);
+    return Number.isInteger(value) && value >= 0 && value <= 3650 ? value : 14;
   }
 
   private mapAffiliate(row: {

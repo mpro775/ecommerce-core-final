@@ -26,7 +26,6 @@ import {
   SoftPanel,
   SoftRow,
 } from '../components/ui';
-import { LockedFeaturePage } from '../feature-gates';
 import averageOrderAnimation from './animated-icons/average-order.json';
 import cancellationAnimation from './animated-icons/cancellation.json';
 import cartRecoveryAnimation from './animated-icons/cart-recovery.json';
@@ -44,7 +43,6 @@ import shippingAnimation from './animated-icons/shipping.json';
 import stockAlertAnimation from './animated-icons/stock-alert.json';
 import storeAnimation from './animated-icons/store.json';
 import { IconsaxAnimatedIcon } from './iconsax-animated-icon';
-import { ReadinessSummaryCard } from '../panels/setup-panel';
 import { useMerchantOverviewData } from './use-merchant-overview-data';
 import {
   anomalyKeyLabel,
@@ -65,16 +63,14 @@ export function OverviewPanel({
   session,
   request,
   storeSettings,
-  onOpenSetup,
 }: {
   session: MerchantSession;
   request: MerchantRequester;
   storeSettings?: StoreSettings | null;
-  onOpenSetup?: () => void;
 }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
-  const { data, loading: loadingState, errors, featureGate } = useMerchantOverviewData(request);
+  const { data, loading: loadingState, errors } = useMerchantOverviewData(request);
   const {
     overview,
     fulfillmentSla,
@@ -94,9 +90,8 @@ export function OverviewPanel({
   const commerceLoading = loadingState.commerce;
   const qualityLoading = loadingState.quality;
   const loadingAny = coreLoading || commerceLoading || qualityLoading;
-  const error = featureGate.isLocked ? '' : errors.core || errors.commerce || errors.quality;
+  const error = errors.core || errors.commerce || errors.quality;
   const storeName = storeSettings?.name?.trim() || 'المتجر';
-  const storeBrandImageUrl = storeSettings?.logoUrl || storeSettings?.faviconUrl || '';
   const currencyCode =
     overview?.currencyCode ??
     paymentsPerformance?.currencyCode ??
@@ -361,14 +356,12 @@ export function OverviewPanel({
                   sx={{
                     width: 58,
                     height: 58,
-                    borderRadius: storeBrandImageUrl ? 2 : '50%',
+                    borderRadius: '50%',
                     display: 'grid',
                     placeItems: 'center',
                     color: theme.palette.common.white,
-                    bgcolor: storeBrandImageUrl
-                      ? alpha(theme.palette.background.paper, isDark ? 0.82 : 0.9)
-                      : theme.palette.primary.main,
-                    border: storeBrandImageUrl ? '1px solid' : 'none',
+                    bgcolor: theme.palette.primary.main,
+                    border: 'none',
                     borderColor: alpha(theme.palette.primary.main, isDark ? 0.24 : 0.14),
                     overflow: 'hidden',
                     boxShadow: isDark
@@ -376,25 +369,11 @@ export function OverviewPanel({
                       : `0 18px 34px ${alpha(theme.palette.primary.main, 0.26)}`,
                   }}
                 >
-                  {storeBrandImageUrl ? (
-                    <Box
-                      component="img"
-                      src={storeBrandImageUrl}
-                      alt={storeName}
-                      sx={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'contain',
-                        p: 0.75,
-                      }}
-                    />
-                  ) : (
-                    overviewIcon(
-                      dashboardAnimation,
-                      'لوحة المؤشرات',
-                      theme.palette.common.white,
-                      34,
-                    )
+                  {overviewIcon(
+                    dashboardAnimation,
+                    'لوحة المؤشرات',
+                    theme.palette.common.white,
+                    34,
                   )}
                 </Box>
                 <Chip
@@ -446,13 +425,7 @@ export function OverviewPanel({
           </Box>
         </Paper>
 
-        {featureGate.isLocked ? (
-          <LockedFeaturePage />
-        ) : (
-          <>
-            {onOpenSetup ? <ReadinessSummaryCard request={request} onOpenSetup={onOpenSetup} /> : null}
-
-            {error ? (
+        {error ? (
               <Alert
                 severity="error"
                 sx={{
@@ -463,7 +436,7 @@ export function OverviewPanel({
               >
                 {error}
               </Alert>
-            ) : null}
+        ) : null}
 
             <Box
               sx={{
@@ -1166,12 +1139,12 @@ export function OverviewPanel({
                   }}
                 >
                   {[
-                    'قم بضبط إعدادات المتجر الأساسية (العملة، سياسات الشحن).',
+                    'اضبط بيانات المتجر التشغيلية والعملات وساعات العمل.',
                     'أضف تصنيفات المنتجات لتنظيم متجرك.',
                     'أضف منتجاتك الأولى وحدد أسعارها ومخزونها.',
                     'تأكد من ضبط طرق الشحن والدفع.',
-                    'اختر واجهة مناسبة (Theme) لمتجرك.',
-                    'اربط نطاقك الخاص (Domain) لانطلاقة احترافية.',
+                    'راجع المخزون وحدود التنبيه بصورة دورية.',
+                    'تابع التحليلات ومؤشرات جودة البيانات.',
                   ].map((item) => (
                     <Box component="li" key={item}>
                       <Typography variant="body2" sx={{ fontSize: '0.92rem', fontWeight: 650 }}>
@@ -1182,8 +1155,6 @@ export function OverviewPanel({
                 </Box>
               </SectionCard>
             </Box>
-          </>
-        )}
       </Box>
     </AppPage>
   );

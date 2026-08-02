@@ -20,13 +20,22 @@ export class DatabaseService implements OnModuleDestroy {
       'redis://localhost:6379';
 
     this.pool = new Pool({ connectionString: databaseUrl });
-    this.redis = new Redis(redisUrl, { lazyConnect: true });
+    this.redis = new Redis(redisUrl, {
+      lazyConnect: true,
+      connectTimeout: 1_000,
+      maxRetriesPerRequest: 1,
+      enableOfflineQueue: false,
+      retryStrategy: () => null,
+    });
+    this.redis.on('error', () => undefined);
   }
 
   async onModuleDestroy(): Promise<void> {
     await this.pool.end();
-    if (this.redis.status !== 'end') {
+    if (this.redis.status === 'ready') {
       await this.redis.quit();
+    } else if (this.redis.status !== 'end') {
+      this.redis.disconnect(false);
     }
   }
 

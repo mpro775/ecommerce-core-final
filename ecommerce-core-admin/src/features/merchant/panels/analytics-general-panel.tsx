@@ -3,7 +3,6 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import type { MerchantRequester } from '../merchant-dashboard.types';
 import type { AnalyticsGeneral } from '../types';
 import { AppPage, PageHeader, StatCard } from '../components/ui';
-import { LockedFeaturePage, useFeatureGate } from '../feature-gates';
 import { AnalyticsFiltersBar, AnalyticsLoadingState, buildAnalyticsQuery, useAnalyticsData, useAnalyticsFilters } from './analytics-common';
 
 function money(value: number, currency: string): string {
@@ -13,26 +12,15 @@ function money(value: number, currency: string): string {
 export function AnalyticsGeneralPanel({ request }: { request: MerchantRequester }) {
   const [filters, setFilters] = useAnalyticsFilters();
   const query = buildAnalyticsQuery(filters);
-  const featureGate = useFeatureGate(request, 'advanced_analytics');
   const { data, loading, error, refresh } = useAnalyticsData<AnalyticsGeneral>(
     request,
     '/analytics/general',
     query,
-    undefined,
-    featureGate.isEnabled,
   );
 
   return (
     <AppPage>
       <PageHeader title="التحليلات العامة" description="نظرة شاملة على المبيعات والزيارات والتحويل والأداء." />
-      {featureGate.loading ? (
-        <AnalyticsLoadingState />
-      ) : featureGate.error ? (
-        <Alert severity="error">{featureGate.error}</Alert>
-      ) : featureGate.isLocked ? (
-        <LockedFeaturePage />
-      ) : (
-        <>
           <AnalyticsFiltersBar filters={filters} onChange={setFilters} onRefresh={refresh} />
 
       {error ? <Alert severity="error">{error}</Alert> : null}
@@ -114,8 +102,6 @@ export function AnalyticsGeneralPanel({ request }: { request: MerchantRequester 
           </Box>
         </Stack>
       ) : null}
-        </>
-      )}
     </AppPage>
   );
 }

@@ -22,7 +22,6 @@ import {
   type StoreRolePreset,
   type TeamRole,
 } from '../auth/constants/store-role-presets.constants';
-import { StoreCapabilitiesService } from '../store-capabilities/store-capabilities.service';
 import { EmailService } from '../email/email.service';
 import { StoresRepository } from '../stores/stores.repository';
 import type { InviteStaffDto } from './dto/invite-staff.dto';
@@ -93,7 +92,6 @@ export class UsersService {
     private readonly authRepository: AuthRepository,
     private readonly auditService: AuditService,
     private readonly configService: ConfigService,
-    private readonly storeCapabilitiesService: StoreCapabilitiesService,
     private readonly emailService: EmailService,
     private readonly storesRepository: StoresRepository,
   ) {}
@@ -339,9 +337,6 @@ export class UsersService {
     if (existingUser) {
       throw new ConflictException('User with this email already exists');
     }
-
-    await this.storeCapabilitiesService.assertFeatureEnabled(invite.store_id, 'staff_management');
-    await this.storeCapabilitiesService.assertMetricCanGrow(invite.store_id, 'staff.total', 1);
 
     const userId = uuidv4();
     const passwordHash = await this.hashValue(input.password);

@@ -1,377 +1,91 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import { AuditService } from '../audit/audit.service';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
-import type { RequestContextData } from '../common/utils/request-context.util';
-import { MediaRepository } from '../media/media.repository';
-import { OutboxService } from '../messaging/outbox.service';
-import type { OrderStatus } from '../orders/constants/order-status.constants';
-import { canTransitionPaymentStatus, type PaymentStatus } from './constants/payment.constants';
+import type { PaymentStatus } from './constants/payment.constants';
 import type { ListPaymentsQueryDto } from './dto/list-payments-query.dto';
-import type { UpdatePaymentStatusDto } from './dto/update-payment-status.dto';
-import type { UploadReceiptDto } from './dto/upload-receipt.dto';
-import {
-  PaymentsRepository,
-  type PaymentRecord,
-  type PaymentWithOrder,
-} from './payments.repository';
-import { AffiliatesService } from '../affiliates/affiliates.service';
+import { PaymentsRepository, type PaymentRecord, type PaymentWithOrder } from './payments.repository';
+import { PAYMENT_COMMAND_RULES } from './payment-transition.rules';
 
 export interface PaymentResponse {
-  id: string;
-  storeId: string;
-  orderId: string;
-  method: string;
-  status: PaymentStatus;
-  amount: number;
-  storePaymentMethodId: string | null;
-  paymentMethodCatalogId: string | null;
-  paymentMethodCode: string | null;
-  paymentMethodName: string | null;
-  accountName: string | null;
-  accountNumber: string | null;
-  phoneNumber: string | null;
-  iban: string | null;
-  instructionsAr: string | null;
-  instructionsEn: string | null;
-  payerReference: string | null;
-  payerReceiptUrl: string | null;
-  payerReceiptMediaAssetId: string | null;
-  payerNote: string | null;
-  customerSubmittedAt: Date | null;
-  receiptUrl: string | null;
-  receiptMediaAssetId: string | null;
-  reviewedAt: Date | null;
-  reviewedBy: string | null;
-  reviewNote: string | null;
-  customerUploadedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
+  id: string; storeId: string; orderId: string; method: string; status: PaymentStatus;
+  statusLabel: string; amount: string; paidAmount: string; refundedAmount: string;
+  refundableAmount: string; currency: string; version: number; submissionVersion: number;
+  storePaymentMethodId: string | null; paymentMethodCatalogId: string | null;
+  paymentMethodCode: string | null; paymentMethodName: string | null;
+  accountName: string | null; accountNumber: string | null; phoneNumber: string | null;
+  iban: string | null; instructionsAr: string | null; instructionsEn: string | null;
+  payerReference: string | null; payerReceiptUrl: string | null;
+  payerReceiptMediaAssetId: string | null; payerNote: string | null;
+  customerSubmittedAt: string | null; receiptUrl: string | null;
+  receiptMediaAssetId: string | null; reviewedAt: string | null; reviewedBy: string | null;
+  reviewNote: string | null; customerUploadedAt: string | null; createdAt: string; updatedAt: string;
+  allowedTransitions: Array<{ command: string; toStatus: string; requiresReason: boolean }>;
 }
-
 export interface PaymentWithOrderResponse extends PaymentResponse {
-  orderCode: string;
-  orderStatus: string;
-  orderTotal: number;
+  orderNumber: string; orderStatus: string; orderTotal: string;
 }
 
 @Injectable()
 export class PaymentsService {
-  constructor(
-    private readonly paymentsRepository: PaymentsRepository,
-    private readonly mediaRepository: MediaRepository,
-    private readonly auditService: AuditService,
-    private readonly outboxService: OutboxService,
-    private readonly affiliatesService: AffiliatesService,
-  ) {}
+  constructor(private readonly repository: PaymentsRepository) {}
 
-  async list(
-    currentUser: AuthUser,
-    query: ListPaymentsQueryDto,
-  ): Promise<PaymentWithOrderResponse[]> {
-    const filters: { orderId?: string; status?: PaymentStatus } = {};
-    if (query.orderId) {
-      filters.orderId = query.orderId;
-    }
-    if (query.status) {
-      filters.status = query.status;
-    }
-    const payments = await this.paymentsRepository.listByStore(currentUser.storeId, filters);
-    return payments.map((p) => this.toWithOrderResponse(p));
+  async list(user: AuthUser, query: ListPaymentsQueryDto) {
+    const page=query.page??1; const limit=query.limit??20;
+    const result=await this.repository.listByStore(user.storeId,{
+      orderId:query.orderId,status:query.status,limit,offset:(page-1)*limit});
+    return {data:result.rows.map((row)=>this.toWithOrderResponse(user,row)),
+      meta:{page,limit,total:result.total,totalPages:Math.ceil(result.total/limit)}};
   }
-
-  async listPendingReview(currentUser: AuthUser): Promise<PaymentWithOrderResponse[]> {
-    const payments = await this.paymentsRepository.listPendingReview(currentUser.storeId);
-    return payments.map((p) => this.toWithOrderResponse(p));
+  async listPendingReview(user: AuthUser) {
+    const rows=await this.repository.listPendingReview(user.storeId);
+    return {data:rows.map((row)=>this.toWithOrderResponse(user,row)),
+      meta:{page:1,limit:rows.length,total:rows.length,totalPages:rows.length?1:0}};
   }
-
-  async getByOrderId(currentUser: AuthUser, orderId: string): Promise<PaymentResponse> {
-    const payment = await this.paymentsRepository.findByOrderId(currentUser.storeId, orderId);
-    if (!payment) {
-      throw new NotFoundException('Payment not found');
-    }
-    return this.toResponse(payment);
+  async getByOrderId(user: AuthUser,orderId:string):Promise<PaymentResponse>{
+    const row=await this.repository.findWithOrderByOrderId(user.storeId,orderId);
+    if(!row)throw new NotFoundException('Payment not found'); return this.toResponse(user,row);
   }
-
-  async getById(currentUser: AuthUser, paymentId: string): Promise<PaymentResponse> {
-    const payment = await this.paymentsRepository.findById(currentUser.storeId, paymentId);
-    if (!payment) {
-      throw new NotFoundException('Payment not found');
-    }
-    return this.toResponse(payment);
+  async getById(user: AuthUser,id:string):Promise<PaymentResponse>{
+    const row=await this.repository.findWithOrderById(user.storeId,id);
+    if(!row)throw new NotFoundException('Payment not found'); return this.toResponse(user,row);
   }
-
-  async uploadReceipt(
-    currentUser: AuthUser,
-    input: UploadReceiptDto,
-    context: RequestContextData,
-  ): Promise<PaymentResponse> {
-    const payment = await this.paymentsRepository.findByOrderId(currentUser.storeId, input.orderId);
-    if (!payment) {
-      throw new NotFoundException('Payment not found for this order');
-    }
-
-    if ((payment.payment_method_code ?? payment.method) === 'cod') {
-      throw new BadRequestException('Receipt can only be uploaded for manual transfer payments');
-    }
-
-    if (payment.status !== 'pending' && payment.status !== 'rejected') {
-      throw new BadRequestException('Cannot upload receipt for this payment status');
-    }
-
-    const mediaAsset = await this.mediaRepository.findById(currentUser.storeId, input.mediaAssetId);
-    if (!mediaAsset) {
-      throw new NotFoundException('Media asset not found');
-    }
-
-    const updated = await this.paymentsRepository.updateReceipt({
-      paymentId: payment.id,
-      storeId: currentUser.storeId,
-      receiptMediaAssetId: input.mediaAssetId,
-      receiptUrl: mediaAsset.public_url,
-    });
-
-    if (!updated) {
-      throw new BadRequestException('Failed to update payment receipt');
-    }
-
-    await this.auditService.log({
-      action: 'payments.receipt_uploaded',
-      storeId: currentUser.storeId,
-      storeUserId: currentUser.id,
-      targetType: 'payment',
-      targetId: payment.id,
-      ipAddress: context.ipAddress,
-      userAgent: context.userAgent,
-      metadata: {
-        orderId: input.orderId,
-        mediaAssetId: input.mediaAssetId,
-        requestId: context.requestId,
-      },
-    });
-
-    const paymentWithOrder = await this.paymentsRepository.findWithOrderById(
-      currentUser.storeId,
-      payment.id,
-    );
-
-    await this.outboxService.enqueue({
-      aggregateType: 'payment',
-      aggregateId: payment.id,
-      eventType: 'payment.receipt_uploaded',
-      payload: {
-        paymentId: payment.id,
-        orderId: input.orderId,
-        orderCode: paymentWithOrder?.order_code,
-        storeId: currentUser.storeId,
-        amount: Number(updated.amount),
-        currencyCode: paymentWithOrder?.order_currency_code,
-        customerId: paymentWithOrder?.customer_id,
-        method: updated.payment_method_code ?? updated.method,
-        referenceNumber: updated.payer_reference,
-        receiptUrl: updated.receipt_url ?? updated.payer_receipt_url,
-        customerName: paymentWithOrder?.customer_name,
-        customerPhone: paymentWithOrder?.customer_phone,
-        uploadedAt: updated.customer_uploaded_at?.toISOString(),
-        status: 'under_review',
-        source: 'payment_receipt_upload',
-      },
-      headers: context.requestId ? { requestId: context.requestId } : {},
-    });
-
-    return this.toResponse(updated);
+  private toResponse(user:AuthUser,p:PaymentRecord):PaymentResponse{
+    return {id:p.id,storeId:p.store_id,orderId:p.order_id,method:p.method,status:p.status,
+      statusLabel:this.label(p.status),amount:p.amount,paidAmount:p.paid_amount,
+      refundedAmount:p.refunded_amount,
+      refundableAmount:(Math.max(0,Number(p.paid_amount)-Number(p.refunded_amount))).toFixed(2),
+      currency:p.currency_code,version:Number(p.version),submissionVersion:p.submission_version,
+      storePaymentMethodId:p.store_payment_method_id,paymentMethodCatalogId:p.payment_method_catalog_id,
+      paymentMethodCode:p.payment_method_code,paymentMethodName:p.payment_method_name,
+      accountName:p.account_name,accountNumber:p.account_number,phoneNumber:p.phone_number,iban:p.iban,
+      instructionsAr:p.instructions_ar,instructionsEn:p.instructions_en,payerReference:p.payer_reference,
+      payerReceiptUrl:p.payer_receipt_url,payerReceiptMediaAssetId:p.payer_receipt_media_asset_id,
+      payerNote:p.payer_note,customerSubmittedAt:p.customer_submitted_at?.toISOString()??null,
+      receiptUrl:p.receipt_url,receiptMediaAssetId:p.receipt_media_asset_id,
+      reviewedAt:p.reviewed_at?.toISOString()??null,reviewedBy:p.reviewed_by,reviewNote:p.review_note,
+      customerUploadedAt:p.customer_uploaded_at?.toISOString()??null,
+      createdAt:p.created_at.toISOString(),updatedAt:p.updated_at.toISOString(),
+      allowedTransitions:this.allowedTransitions(user,p)};
   }
-
-  async updateStatus(
-    currentUser: AuthUser,
-    paymentId: string,
-    input: UpdatePaymentStatusDto,
-    context: RequestContextData,
-  ): Promise<PaymentResponse> {
-    const payment = await this.paymentsRepository.findById(currentUser.storeId, paymentId);
-    if (!payment) {
-      throw new NotFoundException('Payment not found');
-    }
-
-    if (!canTransitionPaymentStatus(payment.status, input.status)) {
-      throw new BadRequestException(
-        `Cannot transition payment status from ${payment.status} to ${input.status}`,
-      );
-    }
-
-    const updated = await this.paymentsRepository.updateStatus({
-      paymentId: payment.id,
-      storeId: currentUser.storeId,
-      status: input.status,
-      reviewedBy: currentUser.id,
-      reviewNote: input.reviewNote ?? null,
-    });
-
-    if (!updated) {
-      throw new BadRequestException('Failed to update payment status');
-    }
-
-    await this.auditService.log({
-      action: 'payments.status_updated',
-      storeId: currentUser.storeId,
-      storeUserId: currentUser.id,
-      targetType: 'payment',
-      targetId: payment.id,
-      ipAddress: context.ipAddress,
-      userAgent: context.userAgent,
-      metadata: {
-        from: payment.status,
-        to: input.status,
-        reviewNote: input.reviewNote ?? null,
-        requestId: context.requestId,
-      },
-    });
-
-    const paymentWithOrder = await this.paymentsRepository.findWithOrderById(
-      currentUser.storeId,
-      payment.id,
-    );
-
-    await this.outboxService.enqueue({
-      aggregateType: 'payment',
-      aggregateId: payment.id,
-      eventType: 'payment.status_changed',
-      payload: {
-        paymentId: payment.id,
-        orderId: payment.order_id,
-        orderCode: paymentWithOrder?.order_code,
-        storeId: currentUser.storeId,
-        amount: Number(updated.amount),
-        currencyCode: paymentWithOrder?.order_currency_code,
-        customerId: paymentWithOrder?.customer_id,
-        method: updated.payment_method_code ?? updated.method,
-        referenceNumber: updated.payer_reference,
-        customerName: paymentWithOrder?.customer_name,
-        customerPhone: paymentWithOrder?.customer_phone,
-        from: payment.status,
-        to: input.status,
-        source: 'payment_status_update',
-      },
-      headers: context.requestId ? { requestId: context.requestId } : {},
-    });
-
-    await this.affiliatesService.handlePaymentStatusChanged({
-      storeId: currentUser.storeId,
-      orderId: payment.order_id,
-      nextStatus: input.status,
-    });
-
-    return this.toResponse(updated);
+  private toWithOrderResponse(user:AuthUser,p:PaymentWithOrder):PaymentWithOrderResponse{return{
+    ...this.toResponse(user,p),orderNumber:p.order_code,orderStatus:p.order_status,orderTotal:p.order_total};}
+  private allowedTransitions(user:AuthUser,payment:PaymentRecord) {
+    const has=(permission:string)=>user.permissions.includes('*')||user.permissions.includes(permission);
+    const method=payment.payment_method_code??payment.method;
+    const state=payment as PaymentRecord&Partial<PaymentWithOrder>;
+    return Object.entries(PAYMENT_COMMAND_RULES).filter(([command,rule])=>{
+      if(!rule.from.includes(payment.status)||!has(rule.permission))return false;
+      if(['submitPaymentProof','resubmitPaymentProof','startPaymentReview','approvePayment','rejectPayment']
+        .includes(command)&&method==='cod')return false;
+      if(command==='collectCodPayment')return method==='cod'&&state.order_status==='confirmed'&&
+        state.fulfillment_status==='fulfilled';
+      if(command==='expirePayment')return method!=='cod'&&payment.expires_at!==null&&
+        payment.expires_at<=new Date();
+      if(command==='cancelPayment'&&payment.status==='under_review')
+        return ['unfulfilled','cancelled'].includes(state.fulfillment_status??'');
+      return true;
+    }).map(([command,rule])=>({command,toStatus:rule.to,requiresReason:rule.reasonRequired}));
   }
-
-  async markCollected(
-    currentUser: AuthUser,
-    paymentId: string,
-    context: RequestContextData,
-  ): Promise<PaymentResponse> {
-    const payment = await this.paymentsRepository.findById(currentUser.storeId, paymentId);
-    if (!payment) {
-      throw new NotFoundException('Payment not found');
-    }
-    if ((payment.payment_method_code ?? payment.method) !== 'cod' || payment.status !== 'pending') {
-      throw new BadRequestException('Only pending COD payments can be marked as collected');
-    }
-    const updated = await this.paymentsRepository.markCollected({
-      paymentId,
-      storeId: currentUser.storeId,
-      reviewedBy: currentUser.id,
-    });
-    if (!updated) {
-      throw new BadRequestException('Failed to mark payment as collected');
-    }
-    await this.auditService.log({
-      action: 'payments.cod_collected',
-      storeId: currentUser.storeId,
-      storeUserId: currentUser.id,
-      targetType: 'payment',
-      targetId: paymentId,
-      ipAddress: context.ipAddress,
-      userAgent: context.userAgent,
-      metadata: { orderId: payment.order_id, requestId: context.requestId },
-    });
-    const paymentWithOrder = await this.paymentsRepository.findWithOrderById(
-      currentUser.storeId,
-      payment.id,
-    );
-
-    await this.outboxService.enqueue({
-      aggregateType: 'payment',
-      aggregateId: paymentId,
-      eventType: 'payment.status_changed',
-      payload: {
-        paymentId,
-        orderId: payment.order_id,
-        orderCode: paymentWithOrder?.order_code,
-        storeId: currentUser.storeId,
-        amount: Number(updated.amount),
-        currencyCode: paymentWithOrder?.order_currency_code,
-        customerId: paymentWithOrder?.customer_id,
-        method: updated.payment_method_code ?? updated.method,
-        customerName: paymentWithOrder?.customer_name,
-        customerPhone: paymentWithOrder?.customer_phone,
-        from: payment.status,
-        to: 'approved',
-        source: 'cod_collected',
-      },
-      headers: context.requestId ? { requestId: context.requestId } : {},
-    });
-    await this.affiliatesService.handlePaymentStatusChanged({
-      storeId: currentUser.storeId,
-      orderId: payment.order_id,
-      nextStatus: 'approved',
-    });
-    return this.toResponse(updated);
-  }
-
-  private toResponse(payment: PaymentRecord): PaymentResponse {
-    return {
-      id: payment.id,
-      storeId: payment.store_id,
-      orderId: payment.order_id,
-      method: payment.method,
-      status: payment.status,
-      amount: Number(payment.amount),
-      storePaymentMethodId: payment.store_payment_method_id,
-      paymentMethodCatalogId: payment.payment_method_catalog_id,
-      paymentMethodCode: payment.payment_method_code,
-      paymentMethodName: payment.payment_method_name,
-      accountName: payment.account_name,
-      accountNumber: payment.account_number,
-      phoneNumber: payment.phone_number,
-      iban: payment.iban,
-      instructionsAr: payment.instructions_ar,
-      instructionsEn: payment.instructions_en,
-      payerReference: payment.payer_reference,
-      payerReceiptUrl: payment.payer_receipt_url,
-      payerReceiptMediaAssetId: payment.payer_receipt_media_asset_id,
-      payerNote: payment.payer_note,
-      customerSubmittedAt: payment.customer_submitted_at,
-      receiptUrl: payment.receipt_url,
-      receiptMediaAssetId: payment.receipt_media_asset_id,
-      reviewedAt: payment.reviewed_at,
-      reviewedBy: payment.reviewed_by,
-      reviewNote: payment.review_note,
-      customerUploadedAt: payment.customer_uploaded_at,
-      createdAt: payment.created_at,
-      updatedAt: payment.updated_at,
-    };
-  }
-
-  private toWithOrderResponse(payment: PaymentWithOrder): PaymentWithOrderResponse {
-    return {
-      ...this.toResponse(payment),
-      orderCode: payment.order_code,
-      orderStatus: payment.order_status,
-      orderTotal: Number(payment.order_total),
-    };
-  }
+  private label(status:PaymentStatus):string{return({pending:'Pending',submitted:'Submitted',
+    under_review:'Under review',approved:'Approved',rejected:'Rejected',expired:'Expired',
+    cancelled:'Cancelled',partially_refunded:'Partially refunded',refunded:'Refunded'} as const)[status];}
 }

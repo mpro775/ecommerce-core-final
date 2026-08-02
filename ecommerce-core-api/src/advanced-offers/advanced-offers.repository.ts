@@ -18,6 +18,13 @@ export interface AdvancedOfferRecord {
   updated_at: Date;
 }
 
+interface Queryable {
+  query: <T = unknown>(
+    queryText: string,
+    values?: unknown[],
+  ) => Promise<{ rows: T[]; rowCount: number | null }>;
+}
+
 @Injectable()
 export class AdvancedOffersRepository {
   constructor(private readonly databaseService: DatabaseService) {}
@@ -144,8 +151,8 @@ export class AdvancedOffersRepository {
     return result.rows[0] ?? null;
   }
 
-  async listActive(storeId: string, now: Date): Promise<AdvancedOfferRecord[]> {
-    const result = await this.databaseService.db.query<AdvancedOfferRecord>(
+  async listActive(storeId: string, now: Date, db?: Queryable): Promise<AdvancedOfferRecord[]> {
+    const result = await (db ?? this.databaseService.db).query<AdvancedOfferRecord>(
       `
         SELECT id, store_id, name, description, offer_type, config, starts_at, ends_at,
                is_active, priority, created_at, updated_at
@@ -155,6 +162,7 @@ export class AdvancedOffersRepository {
           AND (starts_at IS NULL OR starts_at <= $2)
           AND (ends_at IS NULL OR ends_at >= $2)
         ORDER BY priority DESC, created_at DESC
+        ${db ? 'FOR SHARE' : ''}
       `,
       [storeId, now],
     );

@@ -2,7 +2,6 @@ import { Alert, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/ma
 import type { MerchantRequester } from '../merchant-dashboard.types';
 import type { AnalyticsProductsTable } from '../types';
 import { AppPage, DataTableWrapper, PageHeader } from '../components/ui';
-import { LockedFeaturePage, useFeatureGate } from '../feature-gates';
 import { AnalyticsFiltersBar, AnalyticsLoadingState, buildAnalyticsQuery, useAnalyticsData, useAnalyticsFilters } from './analytics-common';
 
 function money(value: number, currency: string): string {
@@ -12,26 +11,15 @@ function money(value: number, currency: string): string {
 export function AnalyticsProductsPanel({ request }: { request: MerchantRequester }) {
   const [filters, setFilters] = useAnalyticsFilters();
   const query = buildAnalyticsQuery(filters);
-  const featureGate = useFeatureGate(request, 'advanced_analytics');
   const { data, loading, error, refresh } = useAnalyticsData<AnalyticsProductsTable>(
     request,
     '/analytics/products',
     query,
-    undefined,
-    featureGate.isEnabled,
   );
 
   return (
     <AppPage>
       <PageHeader title="تحليلات المنتجات" description="الأداء البيعي والخصومات على مستوى المنتج." />
-      {featureGate.loading ? (
-        <AnalyticsLoadingState />
-      ) : featureGate.error ? (
-        <Alert severity="error">{featureGate.error}</Alert>
-      ) : featureGate.isLocked ? (
-        <LockedFeaturePage />
-      ) : (
-        <>
       <AnalyticsFiltersBar filters={filters} onChange={setFilters} onRefresh={refresh} />
       {error ? <Alert severity="error">{error}</Alert> : null}
       <DataTableWrapper>
@@ -60,8 +48,6 @@ export function AnalyticsProductsPanel({ request }: { request: MerchantRequester
           </Table>
         )}
       </DataTableWrapper>
-        </>
-      )}
     </AppPage>
   );
 }

@@ -5,10 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
+import { hostname } from 'node:os';
 import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import type { RequestContextData } from '../common/utils/request-context.util';
-import { StoreCapabilitiesService } from '../store-capabilities/store-capabilities.service';
 import { WebhookSigningService } from '../security/webhook-signing.service';
 import type { CreateWebhookEndpointDto } from './dto/create-webhook-endpoint.dto';
 import type { ListWebhookDeliveriesQueryDto } from './dto/list-webhook-deliveries-query.dto';
@@ -16,6 +16,9 @@ import type { TriggerWebhookEventDto } from './dto/trigger-webhook-event.dto';
 import type { UpdateWebhookEndpointDto } from './dto/update-webhook-endpoint.dto';
 import { WEBHOOK_EVENTS, type WebhookEventType } from './constants/webhook-events.constants';
 import { WebhooksRepository, type WebhookDeliveryWithEndpointRecord } from './webhooks.repository';
+import type { ClaimedOutboxEvent } from '../messaging/outbox.service';
+import { OutboxService } from '../messaging/outbox.service';
+import { MetricsService } from '../observability/metrics.service';
 
 export interface WebhookEndpointResponse {
   id: string;
@@ -39,6 +42,7 @@ export interface WebhookDeliveryResponse {
   responseStatus: number | null;
   responseBody: string | null;
   attemptNumber: number;
+  status: 'pending' | 'processing' | 'delivered' | 'failed';
   deliveredAt: Date | null;
   nextRetryAt: Date | null;
   errorMessage: string | null;
@@ -47,14 +51,14 @@ export interface WebhookDeliveryResponse {
 
 @Injectable()
 export class WebhooksService {
-  private readonly maxAttempts = 5;
   private readonly requestTimeoutMs = 10000;
 
   constructor(
     private readonly webhooksRepository: WebhooksRepository,
     private readonly webhookSigningService: WebhookSigningService,
     private readonly auditService: AuditService,
-    private readonly storeCapabilitiesService: StoreCapabilitiesService,
+    private readonly outboxService: OutboxService,
+    private readonly metricsService: MetricsService,
   ) {}
 
   async createEndpoint(
@@ -161,17 +165,14 @@ export class WebhooksService {
       throw new NotFoundException('Webhook delivery not found');
     }
 
-    const retried = await this.sendDeliveryAttempt(delivery, delivery.attempt_number + 1);
+    const retried = await this.webhooksRepository.scheduleRetry(currentUser.storeId, delivery.id);
+    if (!retried) throw new BadRequestException('Delivered webhooks cannot be retried');
     await this.log('webhooks.delivery_retried', currentUser, deliveryId, context);
     return this.mapDelivery(retried);
   }
 
   async processPendingRetries(limit = 50): Promise<{ processed: number }> {
-    const pending = await this.webhooksRepository.listPendingRetries(limit);
-    for (const delivery of pending) {
-      await this.sendDeliveryAttempt(delivery, delivery.attempt_number + 1);
-    }
-    return { processed: pending.length };
+    return { processed: await this.processDueDeliveries(limit) };
   }
 
   async triggerEvent(
@@ -197,82 +198,79 @@ export class WebhooksService {
     eventType: WebhookEventType,
     data: Record<string, unknown>,
   ): Promise<number> {
-    await this.storeCapabilitiesService.assertFeatureEnabled(storeId, 'webhooks_access');
     this.assertEventTypes([eventType]);
-    const endpoints = await this.webhooksRepository.listActiveEndpointsForEvent(storeId, eventType);
-    if (endpoints.length > 0) {
-      await this.storeCapabilitiesService.assertMetricCanGrow(
-        storeId,
-        'webhooks.monthly',
-        endpoints.length,
-      );
-    }
+    await this.outboxService.enqueueStandalone({
+      aggregateType: 'webhook-manual-event',
+      aggregateId: uuidv4(),
+      eventType,
+      payload: { storeId, ...data },
+    });
+    return 1;
+  }
 
+  async processOutboxEvent(event: ClaimedOutboxEvent): Promise<void> {
+    if (!WEBHOOK_EVENTS.includes(event.event_type as WebhookEventType)) return;
+    const storeId = typeof event.payload.storeId === 'string' ? event.payload.storeId : null;
+    if (!storeId) return;
+    const endpoints = await this.webhooksRepository.listActiveEndpointsForEvent(
+      storeId,
+      event.event_type,
+    );
     for (const endpoint of endpoints) {
-      const payload = this.buildPayload(storeId, eventType, data);
+      const payload = {
+        id: event.id,
+        eventType: event.event_type,
+        timestamp: event.created_at.toISOString(),
+        data: event.payload,
+        storeId,
+      };
       const signed = this.webhookSigningService.signPayload(payload, endpoint.secret_key);
       const headerNames = this.webhookSigningService.getSignatureHeaders();
       const requestHeaders = {
         'content-type': 'application/json',
         [headerNames.signature]: signed.signature,
         [headerNames.timestamp]: signed.timestamp,
+        'x-outbox-id': event.id,
       };
-
-      const delivery = await this.webhooksRepository.createDelivery({
+      await this.webhooksRepository.createOrGetDeliveryFromOutbox({
+        sourceOutboxId: event.id,
         storeId,
         endpointId: endpoint.id,
-        eventType,
+        eventType: event.event_type,
         payload,
         signature: signed.signature,
         requestHeaders,
       });
-
-      const hydratedDelivery: WebhookDeliveryWithEndpointRecord = {
-        ...delivery,
-        endpoint_url: endpoint.url,
-        endpoint_secret_key: endpoint.secret_key,
-      };
-      await this.sendDeliveryAttempt(hydratedDelivery, 1);
     }
-
-    if (endpoints.length > 0) {
-      await this.storeCapabilitiesService.recordUsageEvent(
-        storeId,
-        'webhooks.monthly',
-        endpoints.length,
-        {
-          eventType,
-          endpoints: endpoints.length,
-        },
-      );
-    }
-
-    return endpoints.length;
   }
 
-  private buildPayload(
-    storeId: string,
-    eventType: WebhookEventType,
-    data: Record<string, unknown>,
-  ): {
-    id: string;
-    eventType: string;
-    timestamp: string;
-    data: Record<string, unknown>;
-    storeId: string;
-  } {
-    return {
-      id: uuidv4(),
-      eventType,
-      timestamp: new Date().toISOString(),
-      data,
-      storeId,
-    };
+  async recoverStaleProcessing(): Promise<number> {
+    const recovered = await this.webhooksRepository.recoverStaleProcessing(
+      this.processingTimeoutSeconds(),
+    );
+    if (recovered > 0) {
+      this.metricsService.incrementCounter('webhook_delivery_recovered_total', undefined, recovered);
+    }
+    return recovered;
+  }
+
+  async processDueDeliveries(
+    limit = 50,
+    workerId = `${hostname()}:${process.pid}:${uuidv4()}`,
+  ): Promise<number> {
+    const deliveries = await this.webhooksRepository.claimDueDeliveries(limit, workerId);
+    if (deliveries.length > 0) {
+      this.metricsService.incrementCounter('webhook_delivery_claimed_total', undefined, deliveries.length);
+    }
+    for (const delivery of deliveries) {
+      await this.sendDeliveryAttempt(delivery, workerId);
+    }
+    return deliveries.length;
   }
 
   private async sendDeliveryAttempt(
     delivery: WebhookDeliveryWithEndpointRecord,
-    attemptNumber: number,
+    workerId: string,
   ): Promise<WebhookDeliveryWithEndpointRecord> {
     const body = JSON.stringify(delivery.payload);
     const requestHeaders = this.mapHeadersToRecord(delivery.request_headers);
@@ -292,6 +290,7 @@ export class WebhooksService {
         await this.webhooksRepository.markDeliverySuccess({
           deliveryId: delivery.id,
           endpointId: delivery.endpoint_id,
+          workerId,
           responseStatus: response.status,
           responseBody,
           responseHeaders,
@@ -299,17 +298,18 @@ export class WebhooksService {
 
         return {
           ...delivery,
-          attempt_number: attemptNumber,
+          status: 'delivered',
+          attempt_count: delivery.attempt_count,
           response_status: response.status,
           response_body: responseBody,
           response_headers: responseHeaders,
-          error_message: null,
-          next_retry_at: null,
+          last_error: null,
+          next_attempt_at: null,
           delivered_at: new Date(),
         };
       }
 
-      return this.markFailedDelivery(delivery, attemptNumber, {
+      return this.markFailedDelivery(delivery, workerId, {
         responseStatus: response.status,
         responseBody,
         responseHeaders,
@@ -317,7 +317,7 @@ export class WebhooksService {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Webhook delivery failed';
-      return this.markFailedDelivery(delivery, attemptNumber, {
+      return this.markFailedDelivery(delivery, workerId, {
         responseStatus: null,
         responseBody: null,
         responseHeaders: null,
@@ -328,7 +328,7 @@ export class WebhooksService {
 
   private async markFailedDelivery(
     delivery: WebhookDeliveryWithEndpointRecord,
-    attemptNumber: number,
+    workerId: string,
     input: {
       responseStatus: number | null;
       responseBody: string | null;
@@ -336,35 +336,54 @@ export class WebhooksService {
       errorMessage: string;
     },
   ): Promise<WebhookDeliveryWithEndpointRecord> {
-    const nextRetryAt =
-      attemptNumber < this.maxAttempts
-        ? new Date(Date.now() + this.retryDelayMs(attemptNumber))
+    const terminal = delivery.attempt_count >= this.maximumAttempts();
+    const nextAttemptAt =
+      !terminal
+        ? new Date(Date.now() + this.retryDelayMs(delivery.attempt_count))
         : null;
 
     await this.webhooksRepository.markDeliveryFailure({
       deliveryId: delivery.id,
       endpointId: delivery.endpoint_id,
+      workerId,
       responseStatus: input.responseStatus,
       responseBody: input.responseBody,
       responseHeaders: input.responseHeaders,
       errorMessage: input.errorMessage,
-      nextRetryAt,
-      nextAttemptNumber: attemptNumber,
+      nextAttemptAt,
+      terminal,
     });
+
+    this.metricsService.incrementCounter(
+      terminal ? 'webhook_delivery_failed_total' : 'webhook_delivery_retry_total',
+    );
 
     return {
       ...delivery,
-      attempt_number: attemptNumber,
+      status: terminal ? 'failed' : 'pending',
       response_status: input.responseStatus,
       response_body: input.responseBody,
       response_headers: input.responseHeaders,
-      error_message: input.errorMessage,
-      next_retry_at: nextRetryAt,
+      last_error: input.errorMessage,
+      next_attempt_at: nextAttemptAt,
+      locked_at: null,
+      locked_by: null,
     };
   }
 
   private retryDelayMs(attemptNumber: number): number {
-    return Math.min(60_000, attemptNumber * 5_000);
+    const base = Number(process.env.WEBHOOK_BASE_BACKOFF_MS ?? 5000);
+    return Math.min(3_600_000, base * 2 ** Math.max(0, attemptNumber - 1));
+  }
+
+  private maximumAttempts(): number {
+    const value = Number(process.env.WEBHOOK_MAX_ATTEMPTS ?? 5);
+    return Number.isInteger(value) && value >= 1 && value <= 100 ? value : 5;
+  }
+
+  private processingTimeoutSeconds(): number {
+    const value = Number(process.env.WEBHOOK_PROCESSING_TIMEOUT_SECONDS ?? 120);
+    return Number.isInteger(value) && value >= 5 && value <= 3600 ? value : 120;
   }
 
   private mapHeadersToRecord(headers: Record<string, unknown>): Record<string, string> {
@@ -411,10 +430,11 @@ export class WebhooksService {
     payload: Record<string, unknown>;
     response_status: number | null;
     response_body: string | null;
-    attempt_number: number;
+    status: 'pending' | 'processing' | 'delivered' | 'failed';
+    attempt_count: number;
     delivered_at: Date | null;
-    next_retry_at: Date | null;
-    error_message: string | null;
+    next_attempt_at: Date | null;
+    last_error: string | null;
     created_at: Date;
   }): WebhookDeliveryResponse {
     return {
@@ -425,10 +445,11 @@ export class WebhooksService {
       payload: row.payload,
       responseStatus: row.response_status,
       responseBody: row.response_body,
-      attemptNumber: row.attempt_number,
+      status: row.status,
+      attemptNumber: row.attempt_count,
       deliveredAt: row.delivered_at,
-      nextRetryAt: row.next_retry_at,
-      errorMessage: row.error_message,
+      nextRetryAt: row.next_attempt_at,
+      errorMessage: row.last_error,
       createdAt: row.created_at,
     };
   }

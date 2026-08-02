@@ -5,9 +5,10 @@ import pg from 'pg';
 
 const MIGRATIONS_DIR = path.resolve('migrations');
 const command = process.argv[2];
+const target = process.argv[3];
 
 if (!['up', 'down'].includes(command)) {
-  throw new Error('Usage: node scripts/migrate.mjs <up|down>');
+  throw new Error('Usage: node scripts/migrate.mjs <up|down> [target]');
 }
 
 const connectionString =
@@ -47,7 +48,7 @@ async function readMigrationPairs() {
   });
 }
 
-async function migrateUp() {
+async function migrateUp(target) {
   const pairs = await readMigrationPairs();
   const { rows } = await client.query('SELECT name FROM schema_migrations ORDER BY id ASC');
   const applied = new Set(rows.map((row) => row.name));
@@ -55,6 +56,11 @@ async function migrateUp() {
   for (const pair of pairs) {
     if (applied.has(pair.name)) {
       continue;
+    }
+
+    if (target && pair.name.slice(0, 3) > target) {
+      console.log(`Target reached. Stopping before ${pair.name}`);
+      break;
     }
 
     const upSql = normalizeSql(await fs.readFile(path.join(MIGRATIONS_DIR, pair.upFile), 'utf8'));
@@ -102,7 +108,7 @@ try {
   await ensureMigrationsTable();
 
   if (command === 'up') {
-    await migrateUp();
+    await migrateUp(target);
   } else {
     await migrateDown();
   }

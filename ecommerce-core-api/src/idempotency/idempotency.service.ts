@@ -1,98 +1,114 @@
-import { Injectable } from '@nestjs/common';
-import { createHash } from 'node:crypto';
-import { IdempotencyRepository, type IdempotencyKeyRecord } from './idempotency.repository';
+import { ConflictException, Injectable } from '@nestjs/common';
+import { CHECKOUT_ERROR_CODES, CheckoutDomainException } from '../checkout/checkout.errors';
+import type { QueryExecutor } from '../database/query-executor';
+import { DatabaseService } from '../database/database.service';
+import { IdempotencyRepository } from './idempotency.repository';
 
-export interface IdempotencyContext {
-  storeId: string;
-  key: string;
-  requestBody: unknown;
-}
-
-export interface IdempotencyResult {
-  isCached: boolean;
-  record: IdempotencyKeyRecord | null;
-}
+export type IdempotencyClaim =
+  | { kind: 'owned'; recordId: string }
+  | {
+      kind: 'replay';
+      recordId: string;
+      responseStatus: number;
+      responseBody: Record<string, unknown>;
+    };
 
 @Injectable()
 export class IdempotencyService {
   private readonly defaultTtlHours = 24;
 
-  constructor(private readonly idempotencyRepository: IdempotencyRepository) {}
+  constructor(
+    private readonly idempotencyRepository: IdempotencyRepository,
+    private readonly databaseService: DatabaseService,
+  ) {}
 
-  async checkOrPrepare(context: IdempotencyContext): Promise<IdempotencyResult> {
-    if (!context.key) {
-      return { isCached: false, record: null };
-    }
-
-    const existing = await this.idempotencyRepository.findByStoreAndKey(
-      context.storeId,
-      context.key,
-    );
-
-    if (existing && !this.isExpired(existing)) {
-      return { isCached: true, record: existing };
-    }
-
-    return { isCached: false, record: null };
-  }
-
-  async storeResponse(
-    storeId: string,
-    key: string,
-    requestBody: unknown,
-    response: Record<string, unknown>,
-    orderId?: string,
-  ): Promise<void> {
-    if (!key) {
-      return;
-    }
-
-    const requestHash = this.computeRequestHash(requestBody);
-    const expiresAt = this.computeExpiresAt();
-
-    const createInput: {
+  async claimInTransaction(
+    db: QueryExecutor,
+    input: {
       storeId: string;
+      operation: string;
       key: string;
+      actorId: string | null;
       requestHash: string;
-      response: Record<string, unknown>;
-      orderId?: string;
-      expiresAt: Date;
-    } = {
-      storeId,
-      key,
-      requestHash,
-      response,
-      expiresAt,
-    };
-    if (orderId) {
-      createInput.orderId = orderId;
+    },
+  ): Promise<IdempotencyClaim> {
+    const inserted = await this.idempotencyRepository.claim(db, {
+      ...input,
+      expiresAt: this.computeExpiresAt(),
+    });
+    if (inserted) {
+      return { kind: 'owned', recordId: inserted.id };
     }
-    await this.idempotencyRepository.create(createInput);
+
+    const existing = await this.idempotencyRepository.find(
+      db,
+      input.storeId,
+      input.operation,
+      input.key,
+    );
+    if (!existing) {
+      throw new ConflictException({
+        code: CHECKOUT_ERROR_CODES.IDEMPOTENCY_REQUEST_IN_PROGRESS,
+        message: 'The idempotency request could not be resolved',
+      });
+    }
+    if (existing.request_hash !== input.requestHash) {
+      throw new CheckoutDomainException(
+        CHECKOUT_ERROR_CODES.IDEMPOTENCY_KEY_PAYLOAD_MISMATCH,
+        'The Idempotency-Key was already used with a different checkout payload',
+      );
+    }
+    if (
+      (existing.status === 'completed' || existing.status === 'failed') &&
+      existing.response_status !== null &&
+      existing.response_body !== null
+    ) {
+      return {
+        kind: 'replay',
+        recordId: existing.id,
+        responseStatus: existing.response_status,
+        responseBody: existing.response_body,
+      };
+    }
+    throw new CheckoutDomainException(
+      CHECKOUT_ERROR_CODES.IDEMPOTENCY_REQUEST_IN_PROGRESS,
+      'A checkout with this Idempotency-Key is still processing',
+    );
   }
 
-  async cleanupExpired(): Promise<number> {
-    return this.idempotencyRepository.deleteExpired();
+  completeInTransaction(
+    db: QueryExecutor,
+    input: {
+      recordId: string;
+      responseStatus: number;
+      responseBody: Record<string, unknown>;
+      orderId: string;
+    },
+  ): Promise<void> {
+    return this.idempotencyRepository.complete(db, input);
   }
 
-  private computeRequestHash(body: unknown): string {
-    const normalized = JSON.stringify(body, Object.keys(body as Record<string, unknown>).sort());
-    return createHash('sha256').update(normalized).digest('hex');
+  failInTransaction(
+    db: QueryExecutor,
+    input: {
+      recordId: string;
+      responseStatus: number;
+      responseBody: Record<string, unknown>;
+      lastError: string;
+    },
+  ): Promise<void> {
+    return this.idempotencyRepository.fail(db, input);
+  }
+
+  cleanupExpired(): Promise<number> {
+    return this.idempotencyRepository.deleteExpired(this.databaseService.db);
   }
 
   private computeExpiresAt(): Date {
-    const ttlHours = this.getTtlHours();
+    const configured = Number(process.env.IDEMPOTENCY_KEY_TTL_HOURS ?? this.defaultTtlHours);
+    const ttlHours = Number.isInteger(configured) && configured >= 1 && configured <= 168
+      ? configured
+      : this.defaultTtlHours;
     return new Date(Date.now() + ttlHours * 60 * 60 * 1000);
-  }
-
-  private getTtlHours(): number {
-    const raw = Number(process.env.IDEMPOTENCY_KEY_TTL_HOURS ?? this.defaultTtlHours);
-    if (!Number.isInteger(raw) || raw < 1 || raw > 168) {
-      return this.defaultTtlHours;
-    }
-    return raw;
-  }
-
-  private isExpired(record: IdempotencyKeyRecord): boolean {
-    return new Date() > record.expires_at;
   }
 }

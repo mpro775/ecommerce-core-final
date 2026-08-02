@@ -3,13 +3,14 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { SecurityModule } from '../security/security.module';
 import { ShippingModule } from '../shipping/shipping.module';
-import { WebhooksModule } from '../webhooks/webhooks.module';
 import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { AffiliatesModule } from '../affiliates/affiliates.module';
 import { CurrencyModule } from '../currency/currency.module';
 import { OrdersController } from './orders.controller';
 import { OrdersRepository } from './orders.repository';
 import { OrdersService } from './orders.service';
+import { OrderTransitionService } from './transitions/order-transition.service';
+import { FulfillmentTransitionService } from './transitions/fulfillment-transition.service';
 
 @Module({
   imports: [
@@ -17,13 +18,12 @@ import { OrdersService } from './orders.service';
     InventoryModule,
     PromotionsModule,
     ShippingModule,
-    WebhooksModule,
     LoyaltyModule,
     AffiliatesModule,
     CurrencyModule,
   ],
   controllers: [OrdersController],
-  providers: [OrdersService, OrdersRepository],
-  exports: [OrdersRepository, OrdersService],
+  providers: [OrdersService, OrdersRepository, OrderTransitionService, FulfillmentTransitionService],
+  exports: [OrdersRepository, OrdersService, OrderTransitionService, FulfillmentTransitionService],
 })
 export class OrdersModule {}

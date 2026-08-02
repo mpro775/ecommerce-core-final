@@ -2,6 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from '../database/database.service';
 
+interface Queryable {
+  query: <T = unknown>(
+    queryText: string,
+    values?: unknown[],
+  ) => Promise<{ rows: T[]; rowCount: number | null }>;
+}
+
 export interface MediaAssetRecord {
   id: string;
   store_id: string;
@@ -85,16 +92,36 @@ export class MediaRepository {
     return result.rows[0] ?? null;
   }
 
-  async findById(storeId: string, mediaAssetId: string): Promise<MediaAssetRecord | null> {
-    const result = await this.databaseService.db.query<MediaAssetRecord>(
+  async findById(
+    storeId: string,
+    mediaAssetId: string,
+    db?: Queryable,
+  ): Promise<MediaAssetRecord | null> {
+    const result = await (db ?? this.databaseService.db).query<MediaAssetRecord>(
       `
         SELECT id, store_id, uploaded_by, bucket_name, object_key, public_url, etag, mime_type, file_size_bytes, metadata, created_at
         FROM media_assets
         WHERE store_id = $1
           AND id = $2
         LIMIT 1
+        ${db ? 'FOR SHARE' : ''}
       `,
       [storeId, mediaAssetId],
+    );
+
+    return result.rows[0] ?? null;
+  }
+
+  async findCatalogAssetById(mediaAssetId: string): Promise<MediaAssetRecord | null> {
+    const result = await this.databaseService.db.query<MediaAssetRecord>(
+      `
+        SELECT id, store_id, uploaded_by, bucket_name, object_key, public_url, etag, mime_type,
+               file_size_bytes, metadata, created_at
+        FROM media_assets
+        WHERE id = $1
+        LIMIT 1
+      `,
+      [mediaAssetId],
     );
 
     return result.rows[0] ?? null;

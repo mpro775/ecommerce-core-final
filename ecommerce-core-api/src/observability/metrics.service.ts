@@ -105,6 +105,41 @@ export class MetricsService implements MetricsCollector, OnModuleInit {
       labelNames: ['store_id'],
       buckets: [1, 5, 10, 30, 60, 120],
     });
+
+    const commercialCounters: CounterOptions[] = [
+      { name: 'checkout_success_total', help: 'Committed atomic checkouts', labelNames: ['store_id'] },
+      { name: 'checkout_failure_total', help: 'Atomic checkout failures', labelNames: ['store_id', 'reason'] },
+      { name: 'checkout_idempotency_replay_total', help: 'Checkout idempotency replays', labelNames: ['store_id', 'operation'] },
+      { name: 'checkout_idempotency_conflict_total', help: 'Checkout idempotency conflicts', labelNames: ['store_id'] },
+      { name: 'inventory_reservation_failure_total', help: 'Inventory reservation failures', labelNames: ['store_id'] },
+      { name: 'inventory_reservation_expired_total', help: 'Expired inventory reservations', labelNames: ['store_id'] },
+      { name: 'outbox_claimed_total', help: 'Outbox rows claimed by workers' },
+      { name: 'outbox_published_total', help: 'Outbox rows broker-confirmed' },
+      { name: 'outbox_retry_total', help: 'Outbox publish retries' },
+      { name: 'outbox_failed_total', help: 'Terminal outbox failures' },
+      { name: 'outbox_stale_recovered_total', help: 'Stale Outbox locks recovered' },
+      { name: 'coupon_concurrency_rejection_total', help: 'Coupon concurrency rejections', labelNames: ['store_id'] },
+      { name: 'coupon_reversal_total', help: 'Coupon usages reversed', labelNames: ['store_id'] },
+      { name: 'coupon_duplicate_consume_replay_total', help: 'Duplicate coupon consumes replayed', labelNames: ['store_id'] },
+      { name: 'loyalty_concurrency_rejection_total', help: 'Loyalty concurrency rejections', labelNames: ['store_id'] },
+      { name: 'order_transition_success_total', help: 'Committed order transitions', labelNames: ['store_id', 'command'] },
+      { name: 'order_transition_conflict_total', help: 'Conflicting order transitions', labelNames: ['store_id', 'command'] },
+      { name: 'order_transition_rejected_total', help: 'Rejected order transitions', labelNames: ['store_id', 'command'] },
+      { name: 'fulfillment_transition_success_total', help: 'Committed fulfillment transitions', labelNames: ['store_id', 'command'] },
+      { name: 'fulfillment_transition_rejected_total', help: 'Rejected fulfillment transitions', labelNames: ['store_id', 'command'] },
+      { name: 'fulfillment_payment_gate_block_total', help: 'Fulfillment payment gate rejections', labelNames: ['store_id'] },
+      { name: 'payment_transition_success_total', help: 'Committed payment transitions', labelNames: ['store_id', 'command'] },
+      { name: 'payment_transition_conflict_total', help: 'Conflicting payment transitions', labelNames: ['store_id', 'command'] },
+      { name: 'payment_expired_total', help: 'Payments expired', labelNames: ['store_id'] },
+      { name: 'commercial_override_total', help: 'Commercial overrides used', labelNames: ['store_id', 'command'] },
+      { name: 'document_sequence_allocated_total', help: 'Document numbers allocated', labelNames: ['store_id', 'document_type'] },
+      { name: 'document_sequence_failure_total', help: 'Document allocation failures', labelNames: ['store_id', 'document_type'] },
+      { name: 'webhook_delivery_claimed_total', help: 'Webhook deliveries claimed' },
+      { name: 'webhook_delivery_recovered_total', help: 'Stale webhook deliveries recovered' },
+      { name: 'webhook_delivery_retry_total', help: 'Webhook deliveries retried' },
+      { name: 'webhook_delivery_failed_total', help: 'Webhook deliveries terminally failed' },
+    ];
+    for (const counter of commercialCounters) this.registerCounter(counter);
   }
 
   registerCounter(options: CounterOptions): void {

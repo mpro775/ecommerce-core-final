@@ -26,3 +26,7 @@ logs/
 
 # Coverage
 coverage/
+
+# Local Stage 3 PostgreSQL proof cluster
+.stage3-pgdata/
+.stage3-postgres.log

@@ -28,9 +28,8 @@ import { useTheme } from '@mui/material/styles';
 import { MerchantLoginPage } from './features/auth/merchant-login-page';
 import { MerchantAcceptInvitePage } from './features/auth/merchant-accept-invite-page';
 import { MerchantDashboard } from './features/merchant/merchant-dashboard';
-import { MerchantOnboarding } from './features/merchant/merchant-onboarding';
 import { useMerchantSession } from './features/merchant/use-merchant-session';
-import type { MerchantSession, StoreSettings } from './features/merchant/types';
+import type { MerchantSession } from './features/merchant/types';
 
 const ecommerce_core_ICON_SRC = '/brand/ecommerce_core-icon.png';
 const THEME_RIPPLE_EXPAND_MS = 680;
@@ -162,7 +161,6 @@ export function App({
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [session, setSession] = useMerchantSession();
   const [route, setRoute] = useState<AppRoute>(() => resolveRoute(window.location.pathname));
-  const [showOnboarding, setShowOnboarding] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const isThemeRippleRunningRef = useRef(false);
 
@@ -196,68 +194,6 @@ export function App({
     },
     [onThemeModeChange, themeMode],
   );
-
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function resolveOnboardingState(currentSession: MerchantSession): Promise<void> {
-      if (currentSession.user.onboardingCompleted) {
-        setShowOnboarding(false);
-        return;
-      }
-
-      try {
-        const response = await fetch(`${currentSession.apiBaseUrl}/store/settings`, {
-          headers: {
-            authorization: `Bearer ${currentSession.accessToken}`,
-            'x-store-id': currentSession.user.storeId,
-          },
-          credentials: 'include',
-        });
-
-        if (!response.ok) {
-          throw new Error('Unable to load store settings');
-        }
-
-        const settings = (await response.json()) as StoreSettings;
-        if (cancelled) {
-          return;
-        }
-
-        if (settings.onboardingCompleted) {
-          setSession({
-            ...currentSession,
-            user: {
-              ...currentSession.user,
-              onboardingCompleted: true,
-            },
-          });
-          setShowOnboarding(false);
-          return;
-        }
-      } catch {
-        if (cancelled) {
-          return;
-        }
-      }
-
-      setShowOnboarding(true);
-    }
-
-    if (!session) {
-      setShowOnboarding(false);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    resolveOnboardingState(session).catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [session, setSession]);
 
   useEffect(() => {
     const nextRoute = resolveRoute(window.location.pathname);
@@ -345,22 +281,6 @@ export function App({
     }
 
     if (currentRoute === 'merchant' && currentSession) {
-      if (showOnboarding) {
-        return (
-          <MerchantOnboarding
-            session={currentSession}
-            onCompleted={(nextSession) => {
-              setSession(nextSession);
-              setShowOnboarding(false);
-            }}
-            onSignedOut={() => {
-              setSession(null);
-              navigate('login', true);
-            }}
-          />
-        );
-      }
-
       return (
         <MerchantDashboard
           session={currentSession}
@@ -383,22 +303,6 @@ export function App({
     route === 'login' || route === 'acceptInvite';
 
   if (route === 'merchant') {
-    if (showOnboarding) {
-      return (
-        <Box
-          sx={{
-            minHeight: '100vh',
-            backgroundColor: 'background.default',
-            py: { xs: 2, md: 4 },
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Container maxWidth="lg">{renderRouteContent(route, session)}</Container>
-        </Box>
-      );
-    }
     return (
       <>
         <Box component="a" href="#merchant-main-content" sx={SKIP_LINK_SX}>

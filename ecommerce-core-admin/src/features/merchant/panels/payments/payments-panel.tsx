@@ -26,39 +26,43 @@ import { AppPage, DataTableWrapper, PageHeader, SectionCard } from '../../compon
 import type {
   PaymentStatus,
   PaymentWithOrder,
-  PlatformPaymentMethod,
+  PaginatedPayments,
+  PaymentMethodCatalogItem,
   StorePaymentMethod,
 } from '../../types';
 import { clearFieldErrors, isApiError, mapFieldErrors } from '../../../../lib/api-error';
+import { formatCommercialDate, formatCommercialMoney, newIdempotencyKey } from '../../../../lib/commercial-format';
 
 interface PaymentsPanelProps {
   request: MerchantRequester;
 }
 
-const statusLabels: Record<PaymentStatus, string> = {
-  pending: 'قيد الانتظار',
-  under_review: 'قيد المراجعة',
-  approved: 'معتمد',
-  rejected: 'مرفوض',
-  refunded: 'مسترجع',
+type AdminPaymentCommand = 'startPaymentReview' | 'approvePayment' | 'rejectPayment' |
+  'collectCodPayment' | 'expirePayment' | 'cancelPayment';
+
+const PAYMENT_COMMAND_ROUTES: Record<AdminPaymentCommand, string> = {
+  startPaymentReview: 'start-review', approvePayment: 'approve', rejectPayment: 'reject',
+  collectCodPayment: 'collect-cod', expirePayment: 'expire', cancelPayment: 'cancel',
 };
 
-const statusColors: Record<PaymentStatus, 'default' | 'warning' | 'success' | 'error' | 'info'> = {
-  pending: 'warning',
-  under_review: 'info',
-  approved: 'success',
-  rejected: 'error',
-  refunded: 'default',
-};
+function statusColor(status: PaymentStatus): 'default' | 'warning' | 'success' | 'error' | 'info' {
+  if (status === 'pending' || status === 'submitted') return 'warning';
+  if (status === 'under_review') return 'info';
+  if (status === 'approved') return 'success';
+  if (status === 'rejected' || status === 'expired' || status === 'cancelled') return 'error';
+  return 'default';
+}
 
 export function PaymentsPanel({ request }: PaymentsPanelProps) {
   const [section, setSection] = useState<'review' | 'settings'>('review');
   const [activeTab, setActiveTab] = useState<'pending' | 'all'>('pending');
   const [payments, setPayments] = useState<PaymentWithOrder[]>([]);
   const [selectedPayment, setSelectedPayment] = useState<PaymentWithOrder | null>(null);
-  const [availableMethods, setAvailableMethods] = useState<PlatformPaymentMethod[]>([]);
+  const [availableMethods, setAvailableMethods] = useState<PaymentMethodCatalogItem[]>([]);
   const [storeMethods, setStoreMethods] = useState<StorePaymentMethod[]>([]);
-  const [rejectingPayment, setRejectingPayment] = useState<PaymentWithOrder | null>(null);
+  const [reasonCommand, setReasonCommand] = useState<{
+    payment: PaymentWithOrder; command: 'rejectPayment' | 'cancelPayment';
+  } | null>(null);
   const [reviewNote, setReviewNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -83,8 +87,8 @@ export function PaymentsPanel({ request }: PaymentsPanelProps) {
     setLoading(true);
     setMessage({ text: '', type: 'info' });
     try {
-      const data = await request<PaymentWithOrder[]>('/payments/pending-review', { method: 'GET' });
-      setPayments(data ?? []);
+      const data = await request<PaginatedPayments>('/payments/pending-review', { method: 'GET' });
+      setPayments(data?.data ?? []);
     } catch (err) {
       setMessage({ text: err instanceof Error ? err.message : 'تعذر تحميل المدفوعات', type: 'error' });
     } finally {
@@ -96,8 +100,8 @@ export function PaymentsPanel({ request }: PaymentsPanelProps) {
     setLoading(true);
     setMessage({ text: '', type: 'info' });
     try {
-      const data = await request<PaymentWithOrder[]>('/payments', { method: 'GET' });
-      setPayments(data ?? []);
+      const data = await request<PaginatedPayments>('/payments', { method: 'GET' });
+      setPayments(data?.data ?? []);
     } catch (err) {
       setMessage({ text: err instanceof Error ? err.message : 'تعذر تحميل المدفوعات', type: 'error' });
     } finally {
@@ -110,7 +114,7 @@ export function PaymentsPanel({ request }: PaymentsPanelProps) {
     setMessage({ text: '', type: 'info' });
     try {
       const [available, configured] = await Promise.all([
-        request<PlatformPaymentMethod[]>('/merchant/payment-methods/available', { method: 'GET' }),
+        request<PaymentMethodCatalogItem[]>('/merchant/payment-methods/available', { method: 'GET' }),
         request<StorePaymentMethod[]>('/merchant/payment-methods', { method: 'GET' }),
       ]);
       setAvailableMethods(available ?? []);
@@ -122,10 +126,10 @@ export function PaymentsPanel({ request }: PaymentsPanelProps) {
     }
   }
 
-  async function enablePlatformMethod(platformMethodId: string): Promise<void> {
+  async function enableCatalogMethod(paymentMethodCatalogId: string): Promise<void> {
     setActionLoading(true);
     try {
-      await request(`/merchant/payment-methods/${platformMethodId}/enable`, { method: 'POST' });
+      await request(`/merchant/payment-methods/${paymentMethodCatalogId}/enable`, { method: 'POST' });
       await loadPaymentSettings();
     } catch (err) {
       setMessage({ text: err instanceof Error ? err.message : 'تعذر إضافة طريقة الدفع', type: 'error' });
@@ -166,18 +170,20 @@ export function PaymentsPanel({ request }: PaymentsPanelProps) {
     }
   }
 
-  async function reviewPayment(payment: PaymentWithOrder, status: 'approved' | 'rejected', note?: string): Promise<void> {
+  async function paymentCommand(payment: PaymentWithOrder, command: AdminPaymentCommand, note?: string): Promise<void> {
     setActionLoading(true);
     try {
-      await request(`/payments/${payment.id}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status, reviewNote: note?.trim() || undefined }),
+      const route = PAYMENT_COMMAND_ROUTES[command];
+      await request(`/payments/${payment.id}/${route}`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': newIdempotencyKey(`payment-${route}`) },
+        body: JSON.stringify({ reason: note?.trim() || undefined, expectedVersion: payment.version }),
       });
       setSelectedPayment(null);
-      setRejectingPayment(null);
+      setReasonCommand(null);
       setReviewNote('');
       await (activeTab === 'pending' ? loadPendingPayments() : loadAllPayments());
-      setMessage({ text: status === 'approved' ? 'تم اعتماد الدفع' : 'تم رفض الدفع', type: 'success' });
+      setMessage({ text: 'تم تنفيذ أمر الدفع', type: 'success' });
     } catch (err) {
       setMessage({ text: err instanceof Error ? err.message : 'تعذر تحديث الدفع', type: 'error' });
     } finally {
@@ -185,18 +191,28 @@ export function PaymentsPanel({ request }: PaymentsPanelProps) {
     }
   }
 
-  async function markCollected(payment: PaymentWithOrder): Promise<void> {
-    setActionLoading(true);
-    try {
-      await request(`/payments/${payment.id}/mark-collected`, { method: 'PATCH' });
-      setSelectedPayment(null);
-      await loadAllPayments();
-      setMessage({ text: 'تم تسجيل تحصيل مبلغ الدفع عند الاستلام', type: 'success' });
-    } catch (err) {
-      setMessage({ text: err instanceof Error ? err.message : 'تعذر تسجيل التحصيل', type: 'error' });
-    } finally {
-      setActionLoading(false);
-    }
+  function renderPaymentActions(payment: PaymentWithOrder, compact = false) {
+    const labels: Record<AdminPaymentCommand, string> = {
+      startPaymentReview: 'بدء المراجعة', approvePayment: 'اعتماد الدفع',
+      rejectPayment: 'رفض الدفع', collectCodPayment: 'تم التحصيل',
+      expirePayment: 'إنهاء المهلة', cancelPayment: 'إلغاء الدفع',
+    };
+    return payment.allowedTransitions.map((transition) => {
+      if (!(transition.command in PAYMENT_COMMAND_ROUTES)) return null;
+      const command = transition.command as AdminPaymentCommand;
+      const needsReason = transition.requiresReason;
+      return <Button key={command} size={compact ? 'small' : 'medium'}
+        color={command === 'rejectPayment' || command === 'cancelPayment' ? 'error' :
+          command === 'approvePayment' || command === 'collectCodPayment' ? 'success' : 'primary'}
+        variant={compact ? 'outlined' : 'contained'} disabled={actionLoading}
+        onClick={() => {
+          if (needsReason && (command === 'rejectPayment' || command === 'cancelPayment')) {
+            setReasonCommand({ payment, command });
+            return;
+          }
+          paymentCommand(payment, command).catch(() => undefined);
+        }}>{labels[command]}</Button>;
+    });
   }
 
   return (
@@ -225,17 +241,14 @@ export function PaymentsPanel({ request }: PaymentsPanelProps) {
               [methodId]: clearFieldErrors(current[methodId] ?? {}, fields),
             }))
           }
-          onEnable={(id) => enablePlatformMethod(id)}
+          onEnable={(id) => enableCatalogMethod(id)}
           onSave={(method, patch) => saveStoreMethod(method, patch)}
         />
       ) : selectedPayment ? (
         <PaymentDetail
           payment={selectedPayment}
-          actionLoading={actionLoading}
           onBack={() => setSelectedPayment(null)}
-          onApprove={() => reviewPayment(selectedPayment, 'approved')}
-          onReject={() => setRejectingPayment(selectedPayment)}
-          onMarkCollected={() => markCollected(selectedPayment)}
+          actions={renderPaymentActions(selectedPayment)}
         />
       ) : (
         <Stack spacing={2}>
@@ -289,26 +302,21 @@ export function PaymentsPanel({ request }: PaymentsPanelProps) {
                   ) : (
                     payments.map((payment) => (
                       <TableRow key={payment.id} hover>
-                        <TableCell>{payment.orderCode}</TableCell>
+                        <TableCell>{payment.orderNumber}</TableCell>
                         <TableCell>{payment.paymentMethodName ?? payment.paymentMethodCode ?? payment.method}</TableCell>
                         <TableCell>{payment.payerReference ?? '-'}</TableCell>
-                        <TableCell>{payment.amount.toFixed(2)}</TableCell>
-                        <TableCell><Chip size="small" color={statusColors[payment.status]} label={statusLabels[payment.status]} /></TableCell>
+                        <TableCell>{formatCommercialMoney(payment.amount,payment.currency)}</TableCell>
+                        <TableCell><Chip size="small" color={statusColor(payment.status)} label={payment.statusLabel} /></TableCell>
                         <TableCell>
                           {payment.payerReceiptUrl ?? payment.receiptUrl ? (
                             <Button size="small" href={payment.payerReceiptUrl ?? payment.receiptUrl ?? '#'} target="_blank">عرض</Button>
                           ) : '-'}
                         </TableCell>
-                        <TableCell>{payment.customerSubmittedAt ? new Date(payment.customerSubmittedAt).toLocaleString('ar') : '-'}</TableCell>
+                        <TableCell>{payment.customerSubmittedAt ? formatCommercialDate(payment.customerSubmittedAt) : '-'}</TableCell>
                         <TableCell align="left">
                           <Stack direction="row" spacing={1}>
                             <Button size="small" variant="outlined" onClick={() => setSelectedPayment(payment)}>عرض الطلب</Button>
-                            {payment.status === 'under_review' ? (
-                              <>
-                                <Button size="small" color="success" variant="outlined" onClick={() => reviewPayment(payment, 'approved').catch(() => undefined)}>اعتماد</Button>
-                                <Button size="small" color="error" variant="outlined" onClick={() => setRejectingPayment(payment)}>رفض</Button>
-                              </>
-                            ) : null}
+                            {renderPaymentActions(payment, true)}
                           </Stack>
                         </TableCell>
                       </TableRow>
@@ -321,7 +329,7 @@ export function PaymentsPanel({ request }: PaymentsPanelProps) {
         </Stack>
       )}
 
-      <Dialog open={Boolean(rejectingPayment)} onClose={() => setRejectingPayment(null)} fullWidth maxWidth="sm">
+      <Dialog open={Boolean(reasonCommand)} onClose={() => setReasonCommand(null)} fullWidth maxWidth="sm">
         <DialogTitle>سبب رفض الدفع</DialogTitle>
         <DialogContent>
           <TextField
@@ -335,12 +343,12 @@ export function PaymentsPanel({ request }: PaymentsPanelProps) {
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setRejectingPayment(null)}>إلغاء</Button>
+          <Button onClick={() => setReasonCommand(null)}>إلغاء</Button>
           <Button
             color="error"
             variant="contained"
             disabled={!reviewNote.trim() || actionLoading}
-            onClick={() => rejectingPayment && reviewPayment(rejectingPayment, 'rejected', reviewNote).catch(() => undefined)}
+            onClick={() => reasonCommand && paymentCommand(reasonCommand.payment, reasonCommand.command, reviewNote).catch(() => undefined)}
           >
             رفض الدفع
           </Button>
@@ -352,36 +360,29 @@ export function PaymentsPanel({ request }: PaymentsPanelProps) {
 
 function PaymentDetail({
   payment,
-  actionLoading,
   onBack,
-  onApprove,
-  onReject,
-  onMarkCollected,
+  actions,
 }: {
   payment: PaymentWithOrder;
-  actionLoading: boolean;
   onBack: () => void;
-  onApprove: () => Promise<void>;
-  onReject: () => void;
-  onMarkCollected: () => Promise<void>;
+  actions: React.ReactNode;
 }) {
-  const isCod = (payment.paymentMethodCode ?? payment.method) === 'cod';
   return (
     <Stack spacing={2}>
       <Button variant="outlined" onClick={onBack} sx={{ alignSelf: 'flex-start' }}>العودة</Button>
       <SectionCard>
         <Typography variant="h6" fontWeight={800} gutterBottom>بيانات الدفع</Typography>
         <Stack spacing={1.25}>
-          <InfoRow label="رقم الطلب" value={payment.orderCode} />
+          <InfoRow label="رقم الطلب" value={payment.orderNumber} />
           <InfoRow label="طريقة الدفع" value={payment.paymentMethodName ?? payment.paymentMethodCode ?? payment.method} />
-          <InfoRow label="حالة الدفع" value={statusLabels[payment.status]} />
-          <InfoRow label="المبلغ" value={payment.amount.toFixed(2)} />
+          <InfoRow label="حالة الدفع" value={payment.statusLabel} />
+          <InfoRow label="المبلغ" value={formatCommercialMoney(payment.amount,payment.currency)} />
           <InfoRow label="اسم الحساب المستلم" value={payment.accountName} />
           <InfoRow label="رقم الحساب المستلم" value={payment.accountNumber} />
           <InfoRow label="رقم الهاتف" value={payment.phoneNumber} />
           <InfoRow label="رقم مرجع العملية" value={payment.payerReference} />
           <InfoRow label="تعليمات الدفع" value={payment.instructionsAr ?? payment.instructionsEn} />
-          <InfoRow label="تاريخ إرسال بيانات الدفع" value={payment.customerSubmittedAt ? new Date(payment.customerSubmittedAt).toLocaleString('ar') : null} />
+          <InfoRow label="تاريخ إرسال بيانات الدفع" value={payment.customerSubmittedAt ? formatCommercialDate(payment.customerSubmittedAt) : null} />
           <InfoRow label="تمت المراجعة بواسطة" value={payment.reviewedBy} />
           <InfoRow label="ملاحظة المراجعة" value={payment.reviewNote} />
           {payment.payerReceiptUrl ?? payment.receiptUrl ? (
@@ -392,17 +393,7 @@ function PaymentDetail({
         </Stack>
       </SectionCard>
       <Stack direction="row" spacing={1}>
-        {payment.status === 'under_review' ? (
-          <>
-            <Button color="success" variant="contained" disabled={actionLoading} onClick={() => onApprove().catch(() => undefined)}>اعتماد الدفع</Button>
-            <Button color="error" variant="contained" disabled={actionLoading} onClick={onReject}>رفض الدفع</Button>
-          </>
-        ) : null}
-        {isCod && payment.status === 'pending' ? (
-          <Button color="success" variant="contained" disabled={actionLoading} onClick={() => onMarkCollected().catch(() => undefined)}>
-            تم تحصيل المبلغ
-          </Button>
-        ) : null}
+        {actions}
       </Stack>
     </Stack>
   );
@@ -420,14 +411,16 @@ function PaymentMethodSettings({
 }: {
   loading: boolean;
   actionLoading: boolean;
-  availableMethods: PlatformPaymentMethod[];
+  availableMethods: PaymentMethodCatalogItem[];
   storeMethods: StorePaymentMethod[];
   fieldErrorsByMethodId: Record<string, Record<string, string>>;
   onClearFieldError: (methodId: string, fields: string[]) => void;
-  onEnable: (platformMethodId: string) => Promise<void>;
+  onEnable: (paymentMethodCatalogId: string) => Promise<void>;
   onSave: (method: StorePaymentMethod, patch: Partial<StorePaymentMethod>) => Promise<void>;
 }) {
-  const storeByPlatformId = new Map(storeMethods.map((method) => [method.platformPaymentMethodId, method]));
+  const storeByCatalogId = new Map(
+    storeMethods.map((method) => [method.paymentMethodCatalogId, method]),
+  );
   const enabledCount = storeMethods.filter((method) => method.isEnabled).length;
 
   return (
@@ -435,15 +428,15 @@ function PaymentMethodSettings({
       <PageHeader title="طرق الدفع" description="فعّل طرق الدفع الرسمية من النظام وأضف بيانات الحساب التي ستظهر للعميل أثناء الدفع." />
       {enabledCount === 0 ? <Alert severity="info">لم تقم بتفعيل أي طريقة دفع بعد.</Alert> : null}
       {loading ? <CircularProgress /> : null}
-      {availableMethods.map((platformMethod) => {
-        const storeMethod = storeByPlatformId.get(platformMethod.id);
+      {availableMethods.map((catalogMethod) => {
+        const storeMethod = storeByCatalogId.get(catalogMethod.id);
         return (
-          <SectionCard key={platformMethod.id}>
+          <SectionCard key={catalogMethod.id}>
             <Stack spacing={2}>
               <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2}>
                 <Box>
-                  <Typography variant="h6" fontWeight={800}>{platformMethod.nameAr}</Typography>
-                  <Typography color="text.secondary">{platformMethod.descriptionAr ?? platformMethod.nameEn}</Typography>
+                  <Typography variant="h6" fontWeight={800}>{catalogMethod.nameAr}</Typography>
+                  <Typography color="text.secondary">{catalogMethod.descriptionAr ?? catalogMethod.nameEn}</Typography>
                 </Box>
                 {storeMethod ? (
                   <Stack direction="row" alignItems="center" spacing={1}>
@@ -455,12 +448,12 @@ function PaymentMethodSettings({
                     />
                   </Stack>
                 ) : (
-                  <Button variant="contained" disabled={actionLoading} onClick={() => onEnable(platformMethod.id).catch(() => undefined)}>
+                  <Button variant="contained" disabled={actionLoading} onClick={() => onEnable(catalogMethod.id).catch(() => undefined)}>
                     إضافة للمتجر
                   </Button>
                 )}
               </Stack>
-              {storeMethod && platformMethod.type !== 'cod' ? (
+              {storeMethod && catalogMethod.type !== 'cod' ? (
                 <StoreMethodForm
                   method={storeMethod}
                   disabled={actionLoading}
@@ -469,7 +462,7 @@ function PaymentMethodSettings({
                   onSave={onSave}
                 />
               ) : null}
-              {storeMethod && platformMethod.type === 'cod' ? (
+              {storeMethod && catalogMethod.type === 'cod' ? (
                 <Alert severity="info">الدفع عند الاستلام لا يحتاج اسم حساب أو رقم حساب.</Alert>
               ) : null}
             </Stack>

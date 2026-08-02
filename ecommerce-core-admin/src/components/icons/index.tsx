@@ -21,7 +21,6 @@ import {
   IconBrandWhatsapp,
   IconBrandX,
   IconBrandYoutube,
-  IconBrush,
   IconBuildingStore,
   IconBuildingWarehouse,
   IconCalendarTime,

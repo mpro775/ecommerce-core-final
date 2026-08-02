@@ -17,8 +17,6 @@ export const NOTIFICATION_ROUTING_PATTERNS = [
   'cart.*',
   'checkout.*',
   'support.*',
-  'domain.*',
-  'theme.*',
   'analytics.*',
   'customer.*',
 ];

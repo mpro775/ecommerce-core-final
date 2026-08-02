@@ -14,7 +14,6 @@ import type {
   AnalyticsStockoutRisk,
 } from '../types';
 import type { MerchantRequester } from '../merchant-dashboard.types';
-import { useFeatureGate } from '../feature-gates';
 
 interface MerchantOverviewState {
   overview: AnalyticsOverview | null;
@@ -74,34 +73,11 @@ export function useMerchantOverviewData(request: MerchantRequester) {
   const [state, setState] = useState<MerchantOverviewState>(initialState);
   const [loading, setLoading] = useState<MerchantOverviewLoading>(initialLoading);
   const [errors, setErrors] = useState<MerchantOverviewErrors>(initialErrors);
-  const featureGate = useFeatureGate(request, 'advanced_analytics');
 
   useEffect(() => {
     let isMounted = true;
     setLoading(initialLoading);
     setErrors(initialErrors);
-
-    if (featureGate.loading) {
-      return () => {
-        isMounted = false;
-      };
-    }
-
-    if (featureGate.error) {
-      setLoading({ core: false, commerce: false, quality: false });
-      setErrors({ core: featureGate.error, commerce: '', quality: '' });
-      return () => {
-        isMounted = false;
-      };
-    }
-
-    if (featureGate.isLocked) {
-      setState(initialState);
-      setLoading({ core: false, commerce: false, quality: false });
-      return () => {
-        isMounted = false;
-      };
-    }
 
     async function loadCoreGroup(): Promise<void> {
       try {
@@ -234,12 +210,11 @@ export function useMerchantOverviewData(request: MerchantRequester) {
     return () => {
       isMounted = false;
     };
-  }, [featureGate.error, featureGate.isLocked, featureGate.loading, request]);
+  }, [request]);
 
   return {
     data: state,
     loading,
     errors,
-    featureGate,
   };
 }

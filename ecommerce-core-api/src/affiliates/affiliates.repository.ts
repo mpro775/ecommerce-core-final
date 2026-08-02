@@ -101,13 +101,14 @@ export class AffiliatesRepository {
     }
   }
 
-  async getStoreSettings(storeId: string): Promise<AffiliateSettingsRow> {
-    const result = await this.databaseService.db.query<AffiliateSettingsRow>(
+  async getStoreSettings(storeId: string, db?: Queryable): Promise<AffiliateSettingsRow> {
+    const result = await (db ?? this.databaseService.db).query<AffiliateSettingsRow>(
       `
         SELECT affiliate_enabled, affiliate_default_rate, affiliate_attribution_window_days, affiliate_min_payout
         FROM stores
         WHERE id = $1
         LIMIT 1
+        ${db ? 'FOR SHARE' : ''}
       `,
       [storeId],
     );
@@ -209,6 +210,20 @@ export class AffiliatesRepository {
           AND id = $2
         LIMIT 1
       `,
+      [storeId, affiliateId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findAffiliateByIdInTransaction(
+    db: Queryable,
+    storeId: string,
+    affiliateId: string,
+  ): Promise<AffiliateRecord | null> {
+    const result = await db.query<AffiliateRecord>(
+      `SELECT id, store_id, name, email, phone, status, commission_rate_percent,
+              payout_method, payout_details, notes, created_at, updated_at
+       FROM affiliates WHERE store_id = $1 AND id = $2 FOR SHARE`,
       [storeId, affiliateId],
     );
     return result.rows[0] ?? null;
@@ -387,8 +402,9 @@ export class AffiliatesRepository {
   async resolveCouponAttribution(
     storeId: string,
     couponCode: string,
+    db?: Queryable,
   ): Promise<AffiliateClickAttributionRecord | null> {
-    const result = await this.databaseService.db.query<AffiliateClickAttributionRecord>(
+    const result = await (db ?? this.databaseService.db).query<AffiliateClickAttributionRecord>(
       `
         SELECT c.affiliate_id, NULL::uuid AS affiliate_link_id, 'coupon'::text AS source
         FROM coupons c
@@ -400,6 +416,7 @@ export class AffiliatesRepository {
           AND c.affiliate_id IS NOT NULL
           AND a.status = 'active'
         LIMIT 1
+        ${db ? 'FOR SHARE OF c, a' : ''}
       `,
       [storeId, couponCode],
     );
@@ -410,8 +427,9 @@ export class AffiliatesRepository {
     storeId: string;
     sessionId: string;
     windowDays: number;
+    db?: Queryable;
   }): Promise<AffiliateClickAttributionRecord | null> {
-    const result = await this.databaseService.db.query<AffiliateClickAttributionRecord>(
+    const result = await (input.db ?? this.databaseService.db).query<AffiliateClickAttributionRecord>(
       `
         SELECT ac.affiliate_id, ac.affiliate_link_id, 'link'::text AS source
         FROM affiliate_clicks ac
@@ -424,6 +442,7 @@ export class AffiliatesRepository {
           AND a.status = 'active'
         ORDER BY ac.clicked_at DESC
         LIMIT 1
+        ${input.db ? 'FOR SHARE OF ac, a' : ''}
       `,
       [input.storeId, input.sessionId, input.windowDays],
     );
@@ -444,8 +463,9 @@ export class AffiliatesRepository {
       commissionRatePercent: number;
       commissionBase: number;
       commissionAmount: number;
+      returnWindowDays: number;
     },
-  ): Promise<void> {
+  ): Promise<string | null> {
     const attributionId = uuidv4();
     const inserted = await db.query<{ id: string }>(
       `
@@ -473,18 +493,20 @@ export class AffiliatesRepository {
       ],
     );
 
-    if (!inserted.rows[0]) {
-      return;
-    }
+    if (!inserted.rows[0]) return null;
 
-    await db.query(
+    const commission = await db.query<{ id: string }>(
       `
         INSERT INTO affiliate_commissions (
           id, store_id, order_id, attribution_id, affiliate_id, status,
-          commission_base, commission_amount, reversed_amount, net_amount
+          commission_base, commission_amount, reversed_amount, net_amount,
+          return_window_ends_at, business_key
         )
-        VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, 0, $7)
+        VALUES ($1, $2, $3::uuid, $4, $5, 'pending', $6, $7, 0, $7,
+                NOW() + ($8::int || ' days')::interval,
+                'order:' || ($3::uuid)::text)
         ON CONFLICT (store_id, order_id) DO NOTHING
+        RETURNING id
       `,
       [
         uuidv4(),
@@ -494,8 +516,10 @@ export class AffiliatesRepository {
         input.affiliateId,
         input.commissionBase,
         input.commissionAmount,
+        input.returnWindowDays,
       ],
     );
+    return commission.rows[0]?.id ?? null;
   }
 
   async findOrderState(
@@ -533,8 +557,8 @@ export class AffiliatesRepository {
     db: Queryable,
     storeId: string,
     orderId: string,
-  ): Promise<void> {
-    await db.query(
+  ): Promise<string | null> {
+    const result = await db.query<{ id: string }>(
       `
         UPDATE affiliate_commissions c
         SET status = 'approved',
@@ -549,9 +573,33 @@ export class AffiliatesRepository {
           AND o.store_id = c.store_id
           AND o.status = 'completed'
           AND p.status = 'approved'
+        RETURNING c.id
       `,
       [storeId, orderId],
     );
+    return result.rows[0]?.id ?? null;
+  }
+
+  async markEligibleCommissionsPayable(
+    db: Queryable,
+    limit = 500,
+  ): Promise<Array<{ id: string; store_id: string; order_id: string }>> {
+    const result = await db.query<{ id: string; store_id: string; order_id: string }>(
+      `WITH candidates AS (
+         SELECT id FROM affiliate_commissions
+         WHERE status = 'approved' AND return_window_ends_at <= NOW()
+         ORDER BY return_window_ends_at ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT $1
+       )
+       UPDATE affiliate_commissions commission
+       SET status = 'payable', payable_at = NOW(), updated_at = NOW()
+       FROM candidates
+       WHERE commission.id = candidates.id
+       RETURNING commission.id, commission.store_id, commission.order_id`,
+      [limit],
+    );
+    return result.rows;
   }
 
   async reverseCommission(
@@ -561,22 +609,36 @@ export class AffiliatesRepository {
       orderId: string;
       reason: string;
     },
-  ): Promise<void> {
-    await db.query(
-      `
-        UPDATE affiliate_commissions
-        SET status = 'reversed',
-            reversed_amount = commission_amount,
-            net_amount = 0,
-            reversed_at = NOW(),
-            reversal_reason = $3,
-            updated_at = NOW()
-        WHERE store_id = $1
-          AND order_id = $2
-          AND status IN ('pending', 'approved', 'paid')
+  ): Promise<string | null> {
+    const reversed = await db.query<{ id: string; status: string; commission_amount: string }>(
+      `WITH target AS (
+         SELECT id, status AS previous_status, commission_amount
+         FROM affiliate_commissions
+         WHERE store_id = $1 AND order_id = $2
+           AND status IN ('pending', 'approved', 'payable', 'paid')
+         FOR UPDATE
+       )
+       UPDATE affiliate_commissions commission
+       SET status = 'reversed', reversed_amount = commission.commission_amount,
+           net_amount = 0, reversed_at = NOW(), reversal_reason = $3, updated_at = NOW()
+       FROM target
+       WHERE commission.id = target.id
+       RETURNING commission.id, target.previous_status AS status, commission.commission_amount
       `,
       [input.storeId, input.orderId, input.reason],
     );
+    const row = reversed.rows[0];
+    if (row?.status === 'paid') {
+      await db.query(
+        `INSERT INTO affiliate_commission_adjustments (
+           id, store_id, commission_id, amount, reason, business_key
+         ) VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (store_id, business_key) DO NOTHING`,
+        [uuidv4(), input.storeId, row.id, -Number(row.commission_amount), input.reason,
+         `commission:${row.id}:clawback`],
+      );
+    }
+    return row?.id ?? null;
   }
 
   async listCommissions(input: {
@@ -720,7 +782,7 @@ export class AffiliatesRepository {
           SELECT affiliate_id
           FROM affiliate_commissions
           WHERE store_id = $1
-            AND status = 'approved'
+            AND status = 'payable'
             AND net_amount > 0
             AND id NOT IN (SELECT commission_id FROM affiliate_payout_items)
           GROUP BY affiliate_id
@@ -731,7 +793,7 @@ export class AffiliatesRepository {
         FROM affiliate_commissions c
         INNER JOIN eligible_affiliates ea ON ea.affiliate_id = c.affiliate_id
         WHERE c.store_id = $1
-          AND c.status = 'approved'
+          AND c.status = 'payable'
           AND c.net_amount > 0
           AND c.id NOT IN (SELECT commission_id FROM affiliate_payout_items)
       `,
@@ -837,7 +899,7 @@ export class AffiliatesRepository {
           AND i.store_id = $1
           AND c.id = i.commission_id
           AND c.store_id = i.store_id
-          AND c.status = 'approved'
+          AND c.status = 'payable'
       `,
       [input.storeId, input.batchId],
     );

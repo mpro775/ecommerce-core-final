@@ -35,8 +35,6 @@ const CATEGORY_TABS: Array<{ value: NotificationCategory | 'all'; label: string 
   { value: 'inventory', label: 'المخزون' },
   { value: 'cart', label: 'السلات' },
   { value: 'support', label: 'الدعم' },
-  { value: 'domain', label: 'الدومينات' },
-  { value: 'theme', label: 'القوالب' },
   { value: 'system', label: 'النظام' },
 ];
 
@@ -47,8 +45,6 @@ const CATEGORY_LABELS: Record<string, string> = {
   cart: 'السلات',
   checkout: 'إتمام الطلب',
   support: 'الدعم',
-  domain: 'الدومينات',
-  theme: 'القوالب',
   analytics: 'التحليلات',
   system: 'النظام',
 };

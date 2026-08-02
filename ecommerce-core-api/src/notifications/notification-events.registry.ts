@@ -5,7 +5,6 @@ export type MerchantNotificationCategory =
   | 'cart'
   | 'checkout'
   | 'support'
-  | 'domain'
   | 'analytics'
   | 'system';
 
@@ -315,61 +314,6 @@ export const MERCHANT_NOTIFICATION_EVENTS = defineRegistry({
     isPersistent: true,
     dedupeKey: 'checkout.failed:{{cartId}}:{{reason}}',
   },
-  'domain.verified': {
-    category: 'domain',
-    severity: 'success',
-    recipientType: 'store',
-    title: 'تم التحقق من الدومين',
-    body: 'تم التحقق من إعدادات الدومين {{domain}} بنجاح.',
-    actionUrl: '/merchant?tab=domains&domainId={{domainId}}',
-    defaultFrequency: 'instant',
-    isPersistent: true,
-    dedupeKey: 'domain.verified:{{domainId}}',
-  },
-  'domain.activated': {
-    category: 'domain',
-    severity: 'success',
-    recipientType: 'store',
-    title: 'تم تفعيل الدومين',
-    body: 'أصبح الدومين {{domain}} يعمل على المتجر.',
-    actionUrl: '/merchant?tab=domains&domainId={{domainId}}',
-    defaultFrequency: 'instant',
-    isPersistent: true,
-    dedupeKey: 'domain.activated:{{domainId}}',
-  },
-  'domain.verification_failed': {
-    category: 'domain',
-    severity: 'warning',
-    recipientType: 'store',
-    title: 'تعذر التحقق من الدومين',
-    body: 'الدومين {{domain}} يحتاج مراجعة إعدادات التحقق.',
-    actionUrl: '/merchant?tab=domains&domainId={{domainId}}',
-    defaultFrequency: 'instant',
-    isPersistent: true,
-    dedupeKey: 'domain.verification_failed:{{domainId}}',
-  },
-  'domain.ssl_error': {
-    category: 'domain',
-    severity: 'critical',
-    recipientType: 'store',
-    title: 'مشكلة في شهادة الدومين',
-    body: 'الدومين {{domain}} لديه مشكلة SSL وتحتاج مراجعة.',
-    actionUrl: '/merchant?tab=domains&domainId={{domainId}}',
-    defaultFrequency: 'instant',
-    isPersistent: true,
-    dedupeKey: 'domain.ssl_error:{{domainId}}',
-  },
-  'domain.dns_misconfigured': {
-    category: 'domain',
-    severity: 'warning',
-    recipientType: 'store',
-    title: 'مشكلة في الدومين',
-    body: 'الدومين {{domain}} يحتاج مراجعة إعدادات DNS.',
-    actionUrl: '/merchant?tab=domains&domainId={{domainId}}',
-    defaultFrequency: 'instant',
-    isPersistent: true,
-    dedupeKey: 'domain.dns_misconfigured:{{domainId}}',
-  },
   'support.ticket.created': {
     category: 'support',
     severity: 'warning',
@@ -502,7 +446,6 @@ export const MERCHANT_NOTIFICATION_CATEGORIES: MerchantNotificationCategory[] = 
   'cart',
   'checkout',
   'support',
-  'domain',
   'analytics',
   'system',
 ];

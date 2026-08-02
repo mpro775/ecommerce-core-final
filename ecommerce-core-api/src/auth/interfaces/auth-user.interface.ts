@@ -10,5 +10,4 @@ export interface AuthUser {
   role: StoreRole;
   permissions: string[];
   sessionId: string;
-  onboardingCompleted: boolean;
 }

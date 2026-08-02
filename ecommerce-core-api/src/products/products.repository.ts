@@ -158,14 +158,19 @@ export class ProductsRepository {
     }
   }
 
-  async findById(storeId: string, productId: string): Promise<ProductRecord | null> {
-    const result = await this.databaseService.db.query<ProductRecord>(
+  async findById(
+    storeId: string,
+    productId: string,
+    db?: Queryable,
+  ): Promise<ProductRecord | null> {
+    const result = await (db ?? this.databaseService.db).query<ProductRecord>(
       `
         SELECT ${PRODUCT_COLUMNS}
         FROM products
         WHERE store_id = $1
           AND id = $2
         LIMIT 1
+        ${db ? 'FOR SHARE' : ''}
       `,
       [storeId, productId],
     );
@@ -674,14 +679,19 @@ export class ProductsRepository {
     return result.rows;
   }
 
-  async findVariantById(storeId: string, variantId: string): Promise<ProductVariantRecord | null> {
-    const result = await this.databaseService.db.query<ProductVariantRecord>(
+  async findVariantById(
+    storeId: string,
+    variantId: string,
+    db?: Queryable,
+  ): Promise<ProductVariantRecord | null> {
+    const result = await (db ?? this.databaseService.db).query<ProductVariantRecord>(
       `
         SELECT id, product_id, store_id, title, title_ar, title_en, sku, barcode, price, compare_at_price, stock_quantity, low_stock_threshold, attributes, is_default
         FROM product_variants
         WHERE store_id = $1
           AND id = $2
         LIMIT 1
+        ${db ? 'FOR SHARE' : ''}
       `,
       [storeId, variantId],
     );
@@ -1079,8 +1089,12 @@ export class ProductsRepository {
     }
   }
 
-  async listBundleItems(storeId: string, productId: string): Promise<ProductBundleItemRecord[]> {
-    const result = await this.databaseService.db.query<ProductBundleItemRecord>(
+  async listBundleItems(
+    storeId: string,
+    productId: string,
+    db?: Queryable,
+  ): Promise<ProductBundleItemRecord[]> {
+    const result = await (db ?? this.databaseService.db).query<ProductBundleItemRecord>(
       `
         SELECT
           pbi.id,
@@ -1097,6 +1111,7 @@ export class ProductsRepository {
         WHERE pbi.store_id = $1
           AND pbi.bundle_product_id = $2
         ORDER BY pbi.sort_order ASC, pbi.created_at ASC
+        ${db ? 'FOR SHARE OF pbi, bp, bv' : ''}
       `,
       [storeId, productId],
     );
@@ -1233,8 +1248,9 @@ export class ProductsRepository {
   async findDefaultVariantByProductId(
     storeId: string,
     productId: string,
+    db?: Queryable,
   ): Promise<ProductVariantRecord | null> {
-    const result = await this.databaseService.db.query<ProductVariantRecord>(
+    const result = await (db ?? this.databaseService.db).query<ProductVariantRecord>(
       `
         SELECT id, product_id, store_id, title, title_ar, title_en, sku, barcode, price, compare_at_price, stock_quantity, low_stock_threshold, attributes, is_default
         FROM product_variants
@@ -1242,6 +1258,7 @@ export class ProductsRepository {
           AND product_id = $2
         ORDER BY is_default DESC, created_at ASC
         LIMIT 1
+        ${db ? 'FOR SHARE' : ''}
       `,
       [storeId, productId],
     );

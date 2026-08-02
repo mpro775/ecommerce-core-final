@@ -100,12 +100,10 @@ describe('notifications.worker helpers', () => {
       'cart.*',
       'checkout.*',
       'customer.*',
-      'domain.*',
       'inventory.*',
       'order.*',
       'payment.*',
       'support.*',
-      'theme.*',
     ]);
   });
 

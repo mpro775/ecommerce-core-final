@@ -6,7 +6,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from '../app.module';
 
 async function generateOpenApi(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { logger: false });
+  const app = await NestFactory.create(AppModule, { logger: false, preview: true });
 
   const config = new DocumentBuilder()
     .setTitle('General Ecommerce API')
@@ -16,7 +16,7 @@ async function generateOpenApi(): Promise<void> {
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  const outputDirectory = path.resolve(process.cwd(), '../../docs/api');
+  const outputDirectory = path.resolve(process.cwd(), '../docs/api');
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(path.join(outputDirectory, 'openapi.json'), JSON.stringify(document, null, 2));
 

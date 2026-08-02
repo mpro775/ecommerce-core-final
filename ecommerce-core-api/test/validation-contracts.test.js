@@ -30,6 +30,7 @@ function walkFiles(directory) {
 function loadDtoContracts() {
   const dtoFiles = walkFiles(DIST_DIR)
     .filter((file) => file.endsWith('.dto.js'))
+    .filter((file) => !file.endsWith('-response.dto.js'))
     .sort((a, b) => a.localeCompare(b));
 
   return dtoFiles.flatMap((file) => {

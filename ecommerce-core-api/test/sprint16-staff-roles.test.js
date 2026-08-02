@@ -5,13 +5,23 @@ const {
   STORE_ROLE_PRESETS,
   TEAM_ROLE_CODES,
 } = require('../dist/auth/constants/store-role-presets.constants');
+const { PERMISSIONS } = require('../dist/auth/constants/permission.constants');
 const { UsersService } = require('../dist/users/users.service');
 
 describe('Sprint 16 staff role presets', () => {
   it('keeps owner and legacy staff out of assignable team roles', () => {
     assert.ok(!TEAM_ROLE_CODES.includes('owner'));
     assert.ok(!TEAM_ROLE_CODES.includes('staff'));
-    assert.ok(TEAM_ROLE_CODES.includes('manager'));
+    assert.ok(TEAM_ROLE_CODES.includes('general_manager'));
+  });
+
+  it('keeps every preset permission inside the active permission catalog', () => {
+    const activePermissions = new Set(Object.values(PERMISSIONS));
+    for (const preset of STORE_ROLE_PRESETS) {
+      for (const permission of [...preset.defaultPermissions, ...preset.allowedPermissions]) {
+        assert.ok(activePermissions.has(permission), `${preset.code} contains stale permission ${permission}`);
+      }
+    }
   });
 
   it('does not grant wildcard permissions through team role presets', () => {
@@ -28,7 +38,7 @@ describe('Sprint 16 staff role presets', () => {
     const service = new UsersService({}, {}, {}, {}, {});
 
     assert.throws(
-      () => service.resolvePermissionsForRole('support', ['products:write']),
+      () => service.resolvePermissionsForRole('customer_support', ['products:write']),
       /outside the allowed scope/,
     );
   });
@@ -37,7 +47,7 @@ describe('Sprint 16 staff role presets', () => {
     const service = new UsersService({}, {}, {}, {}, {});
 
     assert.throws(
-      () => service.resolvePermissionsForRole('manager', ['*']),
+      () => service.resolvePermissionsForRole('general_manager', ['*']),
       /Full access is reserved/,
     );
   });

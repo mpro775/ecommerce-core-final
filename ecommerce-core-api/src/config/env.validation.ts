@@ -7,13 +7,11 @@ const WEAK_SECRET_VALUES = [
   'change-me-customer-jwt-secret',
   'change-me-otp-secret',
   'change-me-webhook-secret',
-  'ecommerce_core-local-platform-secret',
   'ecommerce_core-local-access-secret-change-me',
   'ecommerce_core-local-customer-access-secret-change-me',
   'ecommerce_core-local-owner-registration-otp-secret-change-me',
   'ecommerce_core-local-token-hash-secret-change-me',
   'ecommerce_core-local-webhook-secret',
-  'ecommerce_core-local-billing-webhook-secret',
 ];
 
 function productionSecret(min: number, developmentDefault: string): Joi.Schema {
@@ -55,8 +53,29 @@ export const envValidationSchema = Joi.object({
     .max(60_000)
     .default(3_000),
   INVENTORY_RESERVATION_TTL_MINUTES: Joi.number().integer().min(1).max(120).default(15),
+  ORDER_NUMBER_PREFIX: Joi.string().pattern(/^[A-Z0-9]{2,8}$/).default('NJM'),
+  PAYMENT_EXPIRATION_WORKER_INTERVAL_MS: Joi.number().integer().min(1000).max(3600000).default(30000),
+  PAYMENT_EXPIRATION_BATCH_SIZE: Joi.number().integer().min(1).max(1000).default(50),
+  PAYMENT_DEFAULT_EXPIRATION_MINUTES: Joi.number().integer().min(1).max(43200).default(1440),
+  INVENTORY_RESERVATION_WORKER_INTERVAL_MS: Joi.number().integer().min(1000).max(3600000).default(30000),
+  IDEMPOTENCY_KEY_TTL_HOURS: Joi.number().integer().min(1).max(168).default(24),
+  OUTBOX_BATCH_SIZE: Joi.number().integer().min(1).max(1000).default(100),
+  OUTBOX_MAX_ATTEMPTS: Joi.number().integer().min(1).max(100).default(5),
+  OUTBOX_BASE_BACKOFF_MS: Joi.number().integer().min(100).max(300000).default(1000),
+  OUTBOX_PROCESSING_TIMEOUT_SECONDS: Joi.number().integer().min(5).max(3600).default(120),
+  OUTBOX_STALE_RECOVERY_INTERVAL_MS: Joi.number().integer().min(1000).max(3600000).default(30000),
+  WEBHOOK_WORKER_INTERVAL_MS: Joi.number().integer().min(250).max(3600000).default(2000),
+  WEBHOOK_BATCH_SIZE: Joi.number().integer().min(1).max(1000).default(50),
+  WEBHOOK_PROCESSING_TIMEOUT_SECONDS: Joi.number().integer().min(5).max(3600).default(120),
+  WEBHOOK_MAX_ATTEMPTS: Joi.number().integer().min(1).max(100).default(5),
+  WEBHOOK_BASE_BACKOFF_MS: Joi.number().integer().min(100).max(3600000).default(5000),
+  RABBITMQ_CONFIRM_TIMEOUT_MS: Joi.number().integer().min(100).max(120000).default(10000),
+  AFFILIATE_RETURN_WINDOW_DAYS: Joi.number().integer().min(0).max(365).default(14),
+  LOYALTY_EARN_HOLD_DAYS: Joi.number().integer().min(0).max(365).default(14),
+  LOYALTY_EARN_WORKER_INTERVAL_MS: Joi.number().integer().min(1000).max(3600000).default(30000),
+  LOYALTY_EARN_WORKER_BATCH_SIZE: Joi.number().integer().min(1).max(1000).default(100),
+  AFFILIATE_COMMISSION_WORKER_INTERVAL_MS: Joi.number().integer().min(1000).max(3600000).default(60000),
 
-  PLATFORM_ADMIN_SECRET: productionSecret(32, 'ecommerce_core-local-platform-secret'),
   TOKEN_HASH_SECRET: Joi.when('NODE_ENV', {
     is: 'production',
     then: Joi.string()
@@ -128,7 +147,6 @@ export const envValidationSchema = Joi.object({
     .default('https://api.resend.com'),
   RESEND_API_KEY: Joi.string().allow('').default(''),
   WEBHOOK_SECRET: productionSecret(32, 'ecommerce_core-local-webhook-secret'),
-  BILLING_WEBHOOK_SECRET: productionSecret(32, 'ecommerce_core-local-billing-webhook-secret'),
   JWT_CUSTOMER_ACCESS_SECRET: productionSecret(32, 'ecommerce_core-local-customer-access-secret-change-me'),
   JWT_CUSTOMER_ACCESS_EXPIRES_IN: Joi.string().default('15m'),
   CUSTOMER_REFRESH_TOKEN_TTL_DAYS: Joi.number().integer().min(1).max(90).default(30),

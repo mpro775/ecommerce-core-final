@@ -1,72 +1,40 @@
-#!/usr/bin/env node
-/**
- * Guard script: prevents re-introduction of legacy Platform admin patterns.
- * Run via: npm run guard:legacy-platform
- * Add to CI pipeline to enforce the constraint continuously.
- */
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, extname } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { extname, join, relative } from 'node:path';
 
-const FORBIDDEN_PATTERNS = [
-  /\bplatform-admin\b/i,
-  /\bPlatformAdmin\b/,
-  /\bPLATFORM_ADMIN\b/,
-  /\bplatformSuperAdmin\b/,
-  /\bPlatformSuperAdmin\b/,
-  /\bplatform-seed\b/i,
-  /\bPlatformModule\b/,
+const root = process.cwd();
+const extensions = new Set(['.ts', '.tsx', '.js', '.jsx']);
+const forbidden = [
+  /\bStoreCapabilities(?:Module|Service)\b/,
+  /\bStoreReadiness\w*\b/,
+  /merchant\/store-readiness/i,
+  /\bonboardingCompleted\b/,
+  /\bplatformPaymentMethodId\b/,
+  /\bPlatformPaymentMethod\b/,
+  /\bplatformMethod\b/,
+  /\bplatform_agent\b/,
+  /\bplatform_console\b/,
+  /\bFeatureGate\b|\bLockedFeaturePage\b|\buseFeatureGate\b/,
+  /upgrade your plan|feature upgrade/i,
 ];
 
-const SCAN_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.mjs', '.json']);
-const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'scripts']);
-
-function walk(dir) {
-  const results = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const fullPath = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (!IGNORE_DIRS.has(entry.name)) {
-        results.push(...walk(fullPath));
-      }
-    } else if (SCAN_EXTENSIONS.has(extname(entry.name))) {
-      results.push(fullPath);
-    }
-  }
-  return results;
+function walk(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    return entry.isDirectory() ? walk(path) : extensions.has(extname(entry.name)) ? [path] : [];
+  });
 }
-
-const srcDir = join(process.cwd(), 'src');
-const files = walk(srcDir);
 const violations = [];
-
-for (const filePath of files) {
-  const content = readFileSync(filePath, 'utf-8');
-  const lines = content.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    for (const pattern of FORBIDDEN_PATTERNS) {
-      if (pattern.test(lines[i])) {
-        violations.push({
-          file: filePath,
-          line: i + 1,
-          pattern: pattern.source,
-          content: lines[i].trim(),
-        });
-      }
-    }
-  }
+for (const file of walk(join(root, 'src'))) {
+  readFileSync(file, 'utf8').split(/\r?\n/u).forEach((line, index) => {
+    forbidden.forEach((pattern) => {
+      if (pattern.test(line)) violations.push(`${relative(root, file)}:${index + 1}: ${pattern.source}`);
+    });
+  });
 }
-
-if (violations.length > 0) {
-  console.error(`\n❌ Found ${violations.length} legacy Platform reference(s):\n`);
-  for (const v of violations) {
-    console.error(`  ${v.file}:${v.line}`);
-    console.error(`    Pattern: ${v.pattern}`);
-    console.error(`    Content: ${v.content}\n`);
-  }
-  console.error('Legacy Platform patterns must not be re-introduced.');
-  console.error('Remove the offending code before committing.\n');
+if (violations.length) {
+  console.error('Legacy platform guard failed:');
+  console.error(violations.join('\n'));
   process.exit(1);
-} else {
-  console.log('✅ No legacy Platform patterns found.');
-  process.exit(0);
 }
+console.log('Legacy platform guard passed.');
+

@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -46,7 +45,7 @@ export interface StorePaymentMethodResponse {
   instructionsAr: string | null;
   instructionsEn: string | null;
   sortOrder: number;
-  platformMethod: PaymentMethodCatalogResponse;
+  catalogMethod: PaymentMethodCatalogResponse;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -84,7 +83,7 @@ export class PaymentMethodsService {
 
   async listAvailableForMerchant(): Promise<PaymentMethodCatalogResponse[]> {
     const records = await this.repository.listBaseCatalog(false);
-    return Promise.all(records.map((method) => this.mapPlatform(method)));
+    return Promise.all(records.map((method) => this.mapCatalogMethod(method)));
   }
 
   async listStore(currentUser: AuthUser): Promise<StorePaymentMethodResponse[]> {
@@ -96,11 +95,11 @@ export class PaymentMethodsService {
     currentUser: AuthUser,
     paymentMethodCatalogId: string,
   ): Promise<StorePaymentMethodResponse> {
-    const platform = await this.repository.findPlatformById(paymentMethodCatalogId);
-    if (!platform || !platform.is_enabled) {
+    const catalogMethod = await this.repository.findCatalogById(paymentMethodCatalogId);
+    if (!catalogMethod || !catalogMethod.is_enabled) {
       throw new BadRequestException('طريقة الدفع غير متاحة من النظام حاليًا.');
     }
-    const existing = await this.repository.findStoreByPlatformId(
+    const existing = await this.repository.findStoreByCatalogId(
       currentUser.storeId,
       paymentMethodCatalogId,
     );
@@ -121,8 +120,8 @@ export class PaymentMethodsService {
       await this.repository.createStore({
         storeId: currentUser.storeId,
         paymentMethodCatalogId,
-        isEnabled: platform.type === 'cod',
-        sortOrder: platform.sort_order,
+        isEnabled: catalogMethod.type === 'cod',
+        sortOrder: catalogMethod.sort_order,
       }),
     );
   }
@@ -187,8 +186,11 @@ export class PaymentMethodsService {
     return await this.mapStore(updated!);
   }
 
-  async listStorefront(storeId: string): Promise<StorefrontPaymentMethodResponse[]> {
-    return (await this.repository.listStorefront(storeId)).map((method) =>
+  async listStorefront(
+    storeId: string,
+    db?: Parameters<PaymentMethodsRepository['listStorefront']>[1],
+  ): Promise<StorefrontPaymentMethodResponse[]> {
+    return (await this.repository.listStorefront(storeId, db)).map((method) =>
       this.mapStorefront(method),
     );
   }
@@ -197,15 +199,16 @@ export class PaymentMethodsService {
     storeId: string,
     storePaymentMethodId?: string,
     legacyMethod?: string,
+    db?: Parameters<PaymentMethodsRepository['listStorefront']>[1],
   ): Promise<PaymentMethodSnapshot> {
     let method: StorePaymentMethodRecord | null = null;
     if (storePaymentMethodId) {
-      method = await this.repository.findEnabledStoreById(storeId, storePaymentMethodId);
+      method = await this.repository.findEnabledStoreById(storeId, storePaymentMethodId, db);
     } else if (legacyMethod) {
-      const platformCode = legacyMethod === 'transfer' ? 'bank_transfer' : legacyMethod;
-      const platform = await this.repository.findPlatformByCode(platformCode);
-      if (platform) {
-        method = await this.repository.findStoreByPlatformId(storeId, platform.id);
+      const paymentMethodCode = legacyMethod === 'transfer' ? 'bank_transfer' : legacyMethod;
+      const catalogMethod = await this.repository.findCatalogByCode(paymentMethodCode, db);
+      if (catalogMethod) {
+        method = await this.repository.findStoreByCatalogId(storeId, catalogMethod.id, db);
         if (method && (!method.is_enabled || !method.catalog_is_enabled)) {
           method = null;
         }
@@ -264,11 +267,11 @@ export class PaymentMethodsService {
 
   private async resolveImageUrl(mediaAssetId: string | null): Promise<string | null> {
     if (!mediaAssetId) return null;
-    const asset = await this.mediaRepository.findById('__platform__', mediaAssetId);
+    const asset = await this.mediaRepository.findCatalogAssetById(mediaAssetId);
     return asset?.public_url ?? null;
   }
 
-  private async mapPlatform(
+  private async mapCatalogMethod(
     method: PaymentMethodCatalogRecord,
   ): Promise<PaymentMethodCatalogResponse> {
     return {
@@ -304,7 +307,7 @@ export class PaymentMethodsService {
       instructionsAr: method.instructions_ar,
       instructionsEn: method.instructions_en,
       sortOrder: method.sort_order,
-      platformMethod: await this.mapPlatform({
+      catalogMethod: await this.mapCatalogMethod({
         id: method.payment_method_catalog_id,
         code: method.catalog_code,
         name_ar: method.catalog_name_ar,

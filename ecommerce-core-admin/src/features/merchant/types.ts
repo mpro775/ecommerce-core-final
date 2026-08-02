@@ -1,10 +1,14 @@
+import type { components } from '../../api/generated/openapi';
+
 export type TeamRole =
-  | 'manager'
-  | 'operations'
-  | 'catalog'
-  | 'support'
-  | 'finance'
-  | 'internal_marketing';
+  | 'general_manager'
+  | 'order_manager'
+  | 'product_manager'
+  | 'inventory_manager'
+  | 'customer_support'
+  | 'marketing_manager'
+  | 'accountant'
+  | 'viewer';
 
 export type StoreRole = 'owner' | TeamRole;
 
@@ -24,7 +28,6 @@ export interface MerchantUser {
   role: StoreRole;
   permissions: string[];
   sessionId: string;
-  onboardingCompleted: boolean;
 }
 
 export interface MerchantSession {
@@ -49,12 +52,6 @@ export interface StoreSettings {
   descriptionEn: string | null;
   description: string | null;
   slug: string;
-  logoMediaAssetId: string | null;
-  logoUrl: string | null;
-  faviconMediaAssetId: string | null;
-  faviconUrl: string | null;
-  businessCategory: string | null;
-  onboardingCompleted: boolean;
   phone: string | null;
   address: string | null;
   country: string;
@@ -73,47 +70,6 @@ export interface StoreSettings {
   defaultCurrencyCode: string;
   currencies: StoreCurrency[];
   timezone: string;
-  shippingPolicy: string | null;
-  returnPolicy: string | null;
-  privacyPolicy: string | null;
-  termsAndConditions: string | null;
-  loyaltyPolicy: string | null;
-}
-
-export type SetupStepStatus = 'completed' | 'skipped' | 'missing' | 'warning' | 'blocking';
-
-export interface StoreReadinessStep {
-  key: string;
-  title: string;
-  description: string;
-  status: SetupStepStatus;
-  required: boolean;
-  skippable: boolean;
-  actionLabel: string;
-  actionTab: string;
-  quickAction: string | null;
-}
-
-export interface StoreReadinessSection {
-  key: string;
-  title: string;
-  weight: number;
-  completedSteps: number;
-  totalSteps: number;
-  status: SetupStepStatus;
-  steps: StoreReadinessStep[];
-}
-
-export interface StoreReadiness {
-  score: number;
-  status: 'ready' | 'needs_attention' | 'not_ready';
-  canReceiveOrders: boolean;
-  completedSteps: number;
-  totalSteps: number;
-  blockingIssues: StoreReadinessStep[];
-  warnings: StoreReadinessStep[];
-  nextBestAction: StoreReadinessStep | null;
-  sections: StoreReadinessSection[];
 }
 
 export interface StoreCurrency {
@@ -132,7 +88,6 @@ export interface StoreSettingsOptions {
   governorates: string[];
   workingDays: string[];
   socialPlatforms: string[];
-  businessCategories: string[];
 }
 
 export interface Category {
@@ -226,7 +181,7 @@ export interface ProductVariant {
 }
 
 export type InventoryMovementType = 'adjustment' | 'sale' | 'return' | 'restock';
-export type InventoryReservationStatus = 'reserved' | 'released' | 'consumed';
+export type InventoryReservationStatus = 'active' | 'consumed' | 'released' | 'expired';
 
 export interface InventoryMovement {
   id: string;
@@ -278,17 +233,23 @@ export interface InventoryVariantSnapshot {
 }
 
 export interface PaginatedInventoryMovements {
-  items: InventoryMovement[];
-  total: number;
-  page: number;
-  limit: number;
+  data: InventoryMovement[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
 }
 
 export interface PaginatedInventoryReservations {
-  items: InventoryReservation[];
-  total: number;
-  page: number;
-  limit: number;
+  data: InventoryReservation[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
 }
 
 export interface Warehouse {
@@ -439,20 +400,13 @@ export interface PresignedMediaUpload {
   maxFileSizeBytes: number;
 }
 
-export type OrderStatus =
-  | 'new'
-  | 'confirmed'
-  | 'preparing'
-  | 'out_for_delivery'
-  | 'completed'
-  | 'cancelled'
-  | 'returned';
+export type OrderStatus = components['schemas']['OrderSummaryDto']['status'];
 
 export type PaymentMethod = string;
-export type PaymentStatus = 'pending' | 'under_review' | 'approved' | 'rejected' | 'refunded';
+export type PaymentStatus = components['schemas']['PaymentDto']['status'];
 export type ManualPaymentMethodType = 'cod' | 'wallet' | 'bank_transfer' | 'exchange_transfer' | 'custom_manual';
 
-export interface PlatformPaymentMethod {
+export interface PaymentMethodCatalogItem {
   id: string;
   code: string;
   nameAr: string;
@@ -491,47 +445,6 @@ export interface StoreSeoSettings {
   supportedLanguages: Array<'ar' | 'en'>;
 }
 
-export interface StorePage {
-  id: string;
-  slug: string;
-  pageKey: 'about' | 'contact' | 'shipping_policy' | 'return_policy' | 'privacy_policy' | 'terms' | 'faq' | null;
-  pageType: 'custom' | 'about' | 'contact' | 'faq' | 'policy';
-  titleAr: string | null;
-  titleEn: string | null;
-  contentAr: string | null;
-  contentEn: string | null;
-  excerptAr: string | null;
-  excerptEn: string | null;
-  seoTitleAr: string | null;
-  seoTitleEn: string | null;
-  seoDescriptionAr: string | null;
-  seoDescriptionEn: string | null;
-  ogImage: string | null;
-  faqItems: Array<Record<string, unknown>>;
-  seoIndex: boolean;
-  seoFollow: boolean;
-  showInHeader: boolean;
-  showInFooter: boolean;
-  sortOrder: number;
-  status: 'draft' | 'published' | 'archived';
-  publishedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface StorePagesResponse {
-  items: StorePage[];
-}
-
-export interface BootstrapStorePagesResponse {
-  items: Array<{
-    pageKey: NonNullable<StorePage['pageKey']>;
-    status: 'created' | 'updated' | 'skipped';
-    page: StorePage;
-    changedFields?: string[];
-  }>;
-}
-
 export interface SeoAuditResponse {
   score: number;
   counts: Record<string, number>;
@@ -542,7 +455,7 @@ export interface SeoAuditResponse {
 export interface SeoIssue {
   id: string;
   issueType: string;
-  scope?: 'all' | 'home' | 'products' | 'categories' | 'pages';
+  scope?: 'all' | 'home' | 'products' | 'categories';
   targetType: 'home' | 'product' | 'category' | 'page' | 'integration';
   targetId: string | null;
   targetTitle?: string;
@@ -622,7 +535,7 @@ export interface SeoAutoFixResponse {
 export interface StorePaymentMethod {
   id: string;
   storeId: string;
-  platformPaymentMethodId: string;
+  paymentMethodCatalogId: string;
   isEnabled: boolean;
   accountName: string | null;
   accountNumber: string | null;
@@ -631,109 +544,13 @@ export interface StorePaymentMethod {
   instructionsAr: string | null;
   instructionsEn: string | null;
   sortOrder: number;
-  platformMethod: PlatformPaymentMethod;
+  catalogMethod: PaymentMethodCatalogItem;
 }
 
-export interface Payment {
-  id: string;
-  storeId: string;
-  orderId: string;
-  method: PaymentMethod;
-  status: PaymentStatus;
-  amount: number;
-  storePaymentMethodId: string | null;
-  platformPaymentMethodId: string | null;
-  paymentMethodCode: string | null;
-  paymentMethodName: string | null;
-  accountName: string | null;
-  accountNumber: string | null;
-  phoneNumber: string | null;
-  iban: string | null;
-  instructionsAr: string | null;
-  instructionsEn: string | null;
-  payerReference: string | null;
-  payerReceiptUrl: string | null;
-  payerReceiptMediaAssetId: string | null;
-  payerNote: string | null;
-  customerSubmittedAt: string | null;
-  receiptUrl: string | null;
-  receiptMediaAssetId: string | null;
-  reviewedAt: string | null;
-  reviewedBy: string | null;
-  reviewNote: string | null;
-  customerUploadedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface PaymentWithOrder extends Payment {
-  orderCode: string;
-  orderStatus: string;
-  orderTotal: number;
-}
-
-export interface Order {
-  id: string;
-  orderCode: string;
-  status: OrderStatus;
-  subtotal: number;
-  total: number;
-  currencyCode: string;
-  note: string | null;
-  createdAt: string;
-  updatedAt: string;
-  customer: {
-    id: string | null;
-    name: string | null;
-    phone: string | null;
-  };
-  paymentMethod: PaymentMethod | null;
-  paymentMethodCode: string | null;
-  paymentMethodName: string | null;
-  paymentStatus: PaymentStatus | null;
-}
-
-export interface OrderDetail extends Order {
-  items: Array<{
-    id: string;
-    productId: string;
-    variantId: string;
-    title: string;
-    sku: string;
-    unitPrice: number;
-    quantity: number;
-    lineTotal: number;
-  }>;
-  timeline: Array<{
-    from: string | null;
-    to: string;
-    note: string | null;
-    createdAt: string;
-  }>;
-  payment: {
-    id: string;
-    method: string;
-    status: string;
-    amount: number;
-    receiptUrl: string | null;
-    paymentMethodCode: string | null;
-    paymentMethodName: string | null;
-    accountName: string | null;
-    accountNumber: string | null;
-    phoneNumber: string | null;
-    iban: string | null;
-    instructionsAr: string | null;
-    instructionsEn: string | null;
-    payerReference: string | null;
-    payerReceiptUrl: string | null;
-    payerReceiptMediaAssetId: string | null;
-    payerNote: string | null;
-    customerSubmittedAt: string | null;
-    reviewedBy: string | null;
-    reviewedAt: string | null;
-    reviewNote: string | null;
-  } | null;
-}
+export type Payment = components['schemas']['PaymentDto'];
+export type PaymentWithOrder = components['schemas']['PaymentWithOrderDto'];
+export type Order = components['schemas']['OrderSummaryDto'];
+export type OrderDetail = components['schemas']['OrderDetailDto'];
 
 export type CustomerGender = 'male' | 'female' | null;
 
@@ -1348,7 +1165,7 @@ export interface AnalyticsFinancial {
     shippingValue: number;
     discountValue: number;
   };
-  platformPerformance: Array<{ sourceType: 'public' | 'affiliate'; sales: number; orders: number }>;
+  sourcePerformance: Array<{ sourceType: 'public' | 'affiliate'; sales: number; orders: number }>;
 }
 
 export interface AnalyticsShipments {
@@ -1385,13 +1202,8 @@ export interface AnalyticsShipments {
   topAreas: Array<{ area: string; orders: number }>;
 }
 
-export interface PaginatedOrders {
-  items: Order[];
-  total: number;
-  page: number;
-  limit: number;
-  statusCounts: Record<OrderStatus, number>;
-}
+export type PaginatedOrders = components['schemas']['PaginatedOrdersDto'];
+export type PaginatedPayments = components['schemas']['PaginatedPaymentsDto'];
 
 export interface ManualOrderProduct {
   variantId: string;
@@ -1407,10 +1219,8 @@ export interface ManualOrderProduct {
 }
 
 export interface ManualOrderProductSearchResponse {
-  items: ManualOrderProduct[];
-  total: number;
-  page: number;
-  limit: number;
+  data: ManualOrderProduct[];
+  meta: { page: number; limit: number; total: number; totalPages: number };
 }
 
 export interface ShippingZone {
@@ -1769,136 +1579,18 @@ export interface LoyaltyLedgerEntry {
   createdAt: string;
 }
 
-export type SubscriptionBillingCycle = 'monthly' | 'annual' | 'manual';
-
-export interface PlanLimitView {
-  metricKey: string;
-  metricLimit: number | null;
-  resetPeriod: 'monthly' | 'lifetime';
-}
-
-export interface PlanEntitlementView {
-  featureKey: string;
-  isEnabled: boolean;
-}
-
-export interface BillingPlanView {
-  id: string;
-  code: string;
-  name: string;
-  description: string | null;
-  isActive: boolean;
-  monthlyPrice: number | null;
-  annualPrice: number | null;
-  monthlyCompareAtPrice: number | null;
-  annualCompareAtPrice: number | null;
-  currencyCode: string;
-  billingCycleOptions: string[];
-  trialDaysDefault: number;
-  saleLabel: string | null;
-  saleStartsAt: string | null;
-  saleEndsAt: string | null;
-  isIntroOffer: boolean;
-  isSaleActive: boolean;
-  isSaleVisible: boolean;
-  limits: PlanLimitView[];
-  entitlements: PlanEntitlementView[];
-}
-
-export interface StoreSubscriptionView {
-  id: string;
-  storeId: string;
-  status: string;
-  startsAt: string;
-  currentPeriodEnd: string | null;
-  trialEndsAt: string | null;
-  billingCycle: SubscriptionBillingCycle;
-  nextBillingAt: string | null;
-  cancelAtPeriodEnd: boolean;
-  canceledAt: string | null;
-  plan: {
-    id: string;
-    code: string;
-    name: string;
-    description: string | null;
-    isActive: boolean;
-    monthlyPrice: number | null;
-    annualPrice: number | null;
-    monthlyCompareAtPrice: number | null;
-    annualCompareAtPrice: number | null;
-    currencyCode: string;
-    saleLabel: string | null;
-    saleStartsAt: string | null;
-    saleEndsAt: string | null;
-    isIntroOffer: boolean;
-    isSaleActive: boolean;
-    isSaleVisible: boolean;
-  };
-  limits: PlanLimitView[];
-  entitlements: PlanEntitlementView[];
-  usage: Array<{
-    metricKey: string;
-    used: number;
-    limit: number | null;
-    resetPeriod: 'monthly' | 'lifetime';
-  }>;
-}
-
-export interface SubscriptionInvoiceView {
-  id: string;
-  invoiceNumber: string;
-  billingCycle: 'monthly' | 'annual' | 'proration' | 'manual';
-  subtotalAmount: number;
-  originalAmount: number | null;
-  discountAmount: number;
-  couponCode: string | null;
-  taxAmount: number;
-  totalAmount: number;
-  currencyCode: string;
-  status: 'draft' | 'open' | 'paid' | 'failed' | 'void';
-  dueAt: string | null;
-  paidAt: string | null;
-  periodStart: string;
-  periodEnd: string;
-  createdAt: string;
-}
-
-export interface BillingInvoicesPage {
-  items: SubscriptionInvoiceView[];
-  total: number;
-  page: number;
-  limit: number;
-}
-
-export interface SubscriptionReceiptView {
-  id: string;
-  invoiceId: string;
-  invoiceNumber: string | null;
-  status: 'pending_review' | 'approved' | 'rejected' | 'canceled';
-  amount: number;
-  currencyCode: string;
-  transactionReference: string | null;
-  receiptMediaId: string | null;
-  receiptUrl: string | null;
-  receiptFileName: string | null;
-  receiptMimeType: string | null;
-  receiptSizeBytes: number | null;
-  merchantNote: string | null;
-  rejectionReason: string | null;
-  adminNote: string | null;
-  createdAt: string;
-  reviewedAt: string | null;
-}
-
-export interface BillingReceiptsPage {
-  items: SubscriptionReceiptView[];
-  total: number;
-  page: number;
-  limit: number;
-}
-
 export type SupportTicketScope = 'b2b' | 'b2c';
 export type SupportTicketPriority = 'low' | 'medium' | 'high' | 'urgent';
+
+export type SupportTicketSource =
+  | 'merchant_portal'
+  | 'customer_portal'
+  | 'system';
+
+export type SupportActorType =
+  | 'customer'
+  | 'store_user'
+  | 'system';
 export type SupportTicketStatus =
   | 'open'
   | 'waiting_customer'
@@ -1910,20 +1602,20 @@ export interface SupportTicketSummary {
   id: string;
   storeId: string;
   scope: SupportTicketScope;
-  source: string;
+  source: SupportTicketSource;
   subject: string;
   description: string | null;
   status: SupportTicketStatus;
   priority: SupportTicketPriority;
   requester: {
-    type: string;
+    type: SupportActorType;
     customerId: string | null;
     storeUserId: string | null;
     label: string | null;
     name: string | null;
   };
   assignee: {
-    type: 'store_user' | 'platform_agent' | null;
+    type: 'store_user' | null;
     storeUserId: string | null;
     label: string | null;
     name: string | null;
@@ -1945,7 +1637,7 @@ export interface SupportTicketMessage {
   id: string;
   ticketId: string;
   storeId: string;
-  authorType: string;
+  authorType: SupportActorType;
   authorCustomerId: string | null;
   authorStoreUserId: string | null;
   authorName: string | null;
@@ -1962,7 +1654,7 @@ export interface SupportTicketEvent {
   ticketId: string;
   storeId: string;
   eventType: string;
-  actorType: string;
+  actorType: SupportActorType;
   actorCustomerId: string | null;
   actorStoreUserId: string | null;
   actorName: string | null;
@@ -1992,8 +1684,6 @@ export type NotificationCategory =
   | 'cart'
   | 'checkout'
   | 'support'
-  | 'domain'
-  | 'theme'
   | 'analytics'
   | 'system';
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical';
@@ -2001,7 +1691,7 @@ export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical';
 export interface NotificationInboxItem {
   id: string;
   storeId: string | null;
-  recipientType: 'store' | 'store_user' | 'customer' | 'platform';
+  recipientType: 'store' | 'store_user' | 'customer';
   recipientStoreUserId: string | null;
   recipientCustomerId: string | null;
   recipientLabel: string | null;

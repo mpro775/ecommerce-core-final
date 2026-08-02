@@ -578,7 +578,6 @@ export class NotificationsService {
       productTitle: payload.productTitle ?? payload.title ?? payload.sku ?? 'المنتج',
       orderCode: payload.orderCode ? `#${String(payload.orderCode).replace(/^#/, '')}` : '',
       customerName: payload.customerName ?? 'غير محدد',
-      domain: payload.domain ?? payload.hostname,
       message: payload.message ?? payload.errorMessage ?? '',
     };
   }

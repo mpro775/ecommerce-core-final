@@ -229,7 +229,10 @@ export interface DeliveryAreaRecord {
 export class AnalyticsRepository {
   constructor(private readonly databaseService: DatabaseService) { }
 
-  async resolveWindowBounds(timezone: string, windowDays: number): Promise<WindowBoundsRecord> {
+  async resolveWindowBounds(
+    windowDays: number,
+    timezone = 'Asia/Aden',
+  ): Promise<WindowBoundsRecord> {
     const result = await this.databaseService.db.query<WindowBoundsRecord>(
       `
         SELECT

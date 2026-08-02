@@ -173,7 +173,7 @@ export function MerchantDashboard({
 
   const signOut = useCallback(async (): Promise<void> => {
     try {
-      await request('/auth/logout', { method: 'POST' }, { includeStoreHeader: false });
+      await request('/auth/logout', { method: 'POST' });
     } catch {
       // Ignore sign-out network failures and clear session locally.
     }
@@ -198,7 +198,6 @@ export function MerchantDashboard({
           isDesktop={isDesktop}
           mobileOpen={mobileSidebarOpen}
           storeName={storeSettings?.name ?? null}
-          storeLogoUrl={storeSettings?.logoUrl ?? null}
           onCloseMobile={handleCloseNavigation}
           onSelectTab={handleSelectTab}
         />
@@ -209,7 +208,6 @@ export function MerchantDashboard({
           session={session}
 
           storeName={storeSettings?.name ?? null}
-          storeLogoUrl={storeSettings?.logoUrl ?? null}
           themeMode={themeMode}
           showNavigationToggle={!isDesktop}
           userMenuAnchorEl={userMenuAnchorEl}

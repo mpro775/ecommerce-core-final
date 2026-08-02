@@ -15,22 +15,25 @@ import { OutboxService } from '../messaging/outbox.service';
 import { PromotionsService } from '../promotions/promotions.service';
 import { ShippingCalculatorService } from '../shipping/shipping-calculator.service';
 import { ShippingRepository } from '../shipping/shipping.repository';
-import { WebhooksService } from '../webhooks/webhooks.service';
 import { AffiliatesService } from '../affiliates/affiliates.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { CurrencyService } from '../currency/currency.service';
-import {
-  canTransitionOrderStatus,
-  ORDER_STATUSES,
-  type OrderStatus,
-} from './constants/order-status.constants';
+import { ORDER_STATUSES, type OrderStatus } from './constants/order-status.constants';
 import type { PaymentMethod } from './constants/payment.constants';
 import { CreateManualOrderDto } from './dto/create-manual-order.dto';
 import type { ListOrdersQueryDto } from './dto/list-orders-query.dto';
 import type { ManualOrderProductSearchQueryDto } from './dto/manual-order-product-search-query.dto';
 import type { OrdersExportQueryDto } from './dto/orders-export-query.dto';
 import type { UpdateManualOrderDto } from './dto/update-manual-order.dto';
-import type { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import type { OrderCommandDto } from './dto/order-command.dto';
+import { OrderTransitionService } from './transitions/order-transition.service';
+import { ORDER_TRANSITION_RULES } from './transitions/order-transition.rules';
+import { FULFILLMENT_RULES } from './transitions/fulfillment-transition.rules';
+import { PAYMENT_COMMAND_RULES } from '../payments/payment-transition.rules';
+import { DocumentSequenceService } from '../commercial/document-sequence.service';
+import { CommercialCommandIdempotencyService } from '../commercial/commercial-command-idempotency.service';
+import { CommercialDomainException, requireCommercialPermission, requireReason } from '../commercial/commercial.errors';
+import { allocateLargestRemainder } from '../commercial/money-allocation';
 import {
   OrdersRepository,
   type CustomerAddressSummaryRow,
@@ -44,14 +47,16 @@ import {
   type StoreVariantSnapshot,
 } from './orders.repository';
 
-const MANUAL_EDITABLE_STATUSES: OrderStatus[] = ['new', 'confirmed', 'preparing'];
+const MANUAL_EDITABLE_STATUSES: OrderStatus[] = ['new'];
 const EDITABLE_PAYMENT_STATUSES: PaymentStatus[] = ['pending', 'under_review', 'rejected'];
 
 interface ManualResolvedLine {
   productId: string;
   variantId: string;
+  categoryId: string | null;
   title: string;
   sku: string;
+  catalogUnitPrice: number;
   unitPrice: number;
   quantity: number;
   lineDiscount: number;
@@ -71,6 +76,8 @@ interface ManualOrderComputation {
   shippingFee: number;
   couponCode: string | null;
   couponId: string | null;
+  couponDiscount: number;
+  couponEligibleVariantIds: string[];
   lines: ManualResolvedLine[];
   inventoryItems: InventoryOrderItemInput[];
   subtotal: number;
@@ -82,23 +89,24 @@ interface ManualOrderComputation {
 
 export interface OrderResponse {
   id: string;
-  orderCode: string;
+  orderNumber: string;
   status: OrderStatus;
-  subtotal: number;
-  total: number;
-  currencyCode: string;
+  statusLabel: string;
+  fulfillment: { type: string; status: string; statusLabel: string };
+  totals: { subtotalAmount: string; discountAmount: string; shippingAmount: string;
+    taxAmount: string; totalAmount: string; paidAmount: string; refundedAmount: string;
+    refundableAmount: string; currency: string };
+  version: number;
   note: string | null;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
   customer: {
     id: string | null;
     name: string | null;
     phone: string | null;
   };
-  paymentMethod: PaymentMethod | null;
-  paymentMethodCode: string | null;
-  paymentMethodName: string | null;
-  paymentStatus: PaymentStatus | null;
+  paymentSummary: { method: PaymentMethod | null; methodCode: string | null;
+    methodName: string | null; status: PaymentStatus | null };
 }
 
 export interface OrderDetailResponse extends OrderResponse {
@@ -108,21 +116,38 @@ export interface OrderDetailResponse extends OrderResponse {
     variantId: string;
     title: string;
     sku: string;
-    unitPrice: number;
+    unitPrice: string;
     quantity: number;
-    lineTotal: number;
+    lineSubtotal: string;
+    discountAmount: string;
+    lineTotal: string;
+    currency: string;
   }>;
   timeline: Array<{
     from: string | null;
     to: string;
     note: string | null;
-    createdAt: Date;
+    createdAt: string;
   }>;
+  fulfillmentHistory: Array<{ from:string|null;to:string;command:string;reason:string|null;
+    actorType:string;createdAt:string }>;
+  paymentHistory: Array<{ from:string|null;to:string;command:string;reason:string|null;
+    actorType:string;createdAt:string }>;
+  inventoryReservations: Array<{ id:string;variantId:string;quantity:number;status:string;
+    reservedAt:string;expiresAt:string;releasedAt:string|null;consumedAt:string|null;
+    releaseReason:string|null }>;
+  auditTimeline: Array<{ action:string;actorType:string;before:Record<string,unknown>|null;
+    after:Record<string,unknown>|null;metadata:Record<string,unknown>;createdAt:string }>;
   payment: {
     id: string;
     method: string;
     status: string;
-    amount: number;
+    statusLabel: string;
+    amount: string;
+    paidAmount: string;
+    refundedAmount: string;
+    refundableAmount: string;
+    currency: string;
     receiptUrl: string | null;
     paymentMethodCode: string | null;
     paymentMethodName: string | null;
@@ -136,11 +161,16 @@ export interface OrderDetailResponse extends OrderResponse {
     payerReceiptUrl: string | null;
     payerReceiptMediaAssetId: string | null;
     payerNote: string | null;
-    customerSubmittedAt: Date | null;
+    customerSubmittedAt: string | null;
     reviewedBy: string | null;
-    reviewedAt: Date | null;
+    reviewedAt: string | null;
     reviewNote: string | null;
   } | null;
+  allowedTransitions: {
+    order: Array<{ command: string; toStatus: string; requiresReason: boolean }>;
+    fulfillment: Array<{ command: string; toStatus: string; requiresReason: boolean }>;
+    payment: Array<{ command: string; toStatus: string; requiresReason: boolean }>;
+  };
 }
 
 @Injectable()
@@ -153,10 +183,12 @@ export class OrdersService {
     private readonly shippingCalculatorService: ShippingCalculatorService,
     private readonly auditService: AuditService,
     private readonly outboxService: OutboxService,
-    private readonly webhooksService: WebhooksService,
     private readonly loyaltyService: LoyaltyService,
     private readonly affiliatesService: AffiliatesService,
     private readonly currencyService: CurrencyService,
+    private readonly orderTransitions: OrderTransitionService,
+    private readonly documentSequences: DocumentSequenceService,
+    private readonly commercialIdempotency: CommercialCommandIdempotencyService,
   ) {}
 
   async list(currentUser: AuthUser, query: ListOrdersQueryDto) {
@@ -178,11 +210,9 @@ export class OrdersService {
     });
 
     return {
-      items: result.rows.map((order) => this.mapListOrder(order)),
-      total: result.total,
-      page,
-      limit,
-      statusCounts: this.mapStatusCounts(counts),
+      data: result.rows.map((order) => this.mapListOrder(order)),
+      meta: { page, limit, total: result.total, totalPages: Math.ceil(result.total / limit) },
+      summary: { statusCounts: this.mapStatusCounts(counts) },
     };
   }
 
@@ -241,27 +271,30 @@ export class OrdersService {
     });
 
     return {
-      items: result.rows.map((row) => this.mapManualProduct(row)),
-      total: result.total,
-      page,
-      limit,
+      data: result.rows.map((row) => this.mapManualProduct(row)),
+      meta: { page, limit, total: result.total, totalPages: Math.ceil(result.total/limit) },
     };
   }
 
   async createManual(
     currentUser: AuthUser,
     input: CreateManualOrderDto,
+    idempotencyKey: string,
     context: RequestContextData,
   ): Promise<OrderDetailResponse> {
-    const resolvedCurrency = await this.currencyService.resolveStoreCurrency(
-      currentUser.storeId,
-      input.currencyCode,
-    );
-    const computation = await this.resolveManualOrderComputation(currentUser, input);
     const orderId = this.generateUuid();
-    const orderCode = await this.generateOrderCode(currentUser.storeId);
-
-    await this.ordersRepository.withTransaction(async (db) => {
+    const overrideRequested=input.lines.some((line)=>line.unitPriceOverride!==undefined||
+      (line.lineDiscount??0)>0);
+    if(overrideRequested){requireCommercialPermission(currentUser.permissions,'orders:manual-price-override');
+      requireReason(input.priceOverrideReason);}
+    const result=await this.ordersRepository.withTransaction(async (db) => {
+      const claim=await this.commercialIdempotency.claim(db,{storeId:currentUser.storeId,
+        operation:'admin.order.create',key:idempotencyKey,actorId:currentUser.id,payload:input});
+      if(claim.kind==='replay')return {orderId:String(claim.responseBody.id),replayed:true};
+      const resolvedCurrency = await this.currencyService.resolveStoreCurrencyInTransaction(
+        db,currentUser.storeId,input.currencyCode);
+      const computation = await this.resolveManualOrderComputation(currentUser, input, db);
+      const orderCode=await this.documentSequences.allocate(db,{storeId:currentUser.storeId,documentType:'ORD'});
       await this.inventoryService.releaseExpiredReservationsInTransaction(db, currentUser.storeId);
 
       await this.ordersRepository.createOrder(db, {
@@ -274,6 +307,11 @@ export class OrdersService {
         shippingZoneId: computation.shippingZoneId,
         shippingMethodId: computation.shippingMethodId,
         shippingMethodSnapshot: computation.shippingMethodSnapshot,
+        fulfillmentType: computation.shippingMethodType === 'store_pickup'
+          ? 'pickup'
+          : computation.shippingMethodType
+            ? 'delivery'
+            : 'manual_coordination',
         shippingFee: computation.shippingFee,
         discountTotal: computation.discountTotal,
         couponCode: computation.couponCode,
@@ -288,7 +326,10 @@ export class OrdersService {
         shippingAddress: computation.shippingAddress,
       });
 
-      await this.persistOrderItems(db, currentUser.storeId, orderId, computation.lines);
+      await this.persistOrderItems(db, currentUser.storeId, orderId, computation.lines,
+        computation.couponDiscount,computation.couponEligibleVariantIds,resolvedCurrency.currencyCode, {
+          actorId: currentUser.id, reason: input.priceOverrideReason?.trim() ?? null,
+        });
       if (computation.inventoryItems.length > 0) {
         await this.inventoryService.reserveOrderItems(db, {
           storeId: currentUser.storeId,
@@ -296,6 +337,8 @@ export class OrdersService {
           expiresAt: this.buildReservationExpiryDate(),
           items: computation.inventoryItems,
           metadata: { source: 'admin.manual_order.create' },
+          actorId: currentUser.id,
+          actorType: 'admin',
         });
       }
 
@@ -304,72 +347,52 @@ export class OrdersService {
         orderId,
         method: computation.paymentMethod,
         amount: computation.total,
+        currencyCode: resolvedCurrency.currencyCode,
       });
 
       if (computation.couponId) {
-        await this.promotionsService.increaseCouponUsageInTransaction(
-          db,
-          currentUser.storeId,
-          computation.couponId,
-        );
+        await this.promotionsService.consumeCouponInTransaction(db,{storeId:currentUser.storeId,
+          couponId:computation.couponId,orderId,customerId:computation.customer.id,
+          discountAmount:computation.couponDiscount,currencyCode:resolvedCurrency.currencyCode,
+          subtotal:computation.subtotal,productIds:computation.lines.map((line)=>line.productId),categoryIds:computation.lines.map((line)=>line.categoryId).filter((id)=>id!==null) as string[]});
       }
 
       await this.ordersRepository.insertOrderStatusHistory(db, {
         storeId: currentUser.storeId,
         orderId,
-        oldStatus: null,
-        newStatus: 'new',
-        changedBy: currentUser.id,
-        note: 'Order created manually from admin panel',
+        fromStatus: null,
+        toStatus: 'new',
+        actorId: currentUser.id,
+        actorType: 'admin',
+        command: 'createManualOrder',
+        reason: 'Order created manually from admin panel',
+        requestId: context.requestId,
+        idempotencyRecordId: claim.recordId,
+        businessKey: `order:${orderId}:created`,
       });
+      await this.auditService.log({action:'orders.manual_created',storeId:currentUser.storeId,
+        storeUserId:currentUser.id,targetType:'order',targetId:orderId,ipAddress:context.ipAddress,
+        userAgent:context.userAgent,beforeSnapshot:null,afterSnapshot:{status:'new'},
+        metadata:{requestId:context.requestId,priceOverride:overrideRequested,
+          priceOverrideReason:overrideRequested?input.priceOverrideReason?.trim():null}},db);
+      await this.outboxService.enqueueInTransaction(db,{aggregateType:'order',aggregateId:orderId,
+        eventType:'order.created',deduplicationKey:`order.created:${orderId}`,
+        payload:{orderId,orderNumber:orderCode,storeId:currentUser.storeId,totalAmount:this.decimal(computation.total),
+          currency:resolvedCurrency.currencyCode,customerId:computation.customer.id,
+          paymentMethod:computation.paymentMethod,paymentStatus:'pending',orderStatus:'new',source:'admin_manual',
+          actor:{id:currentUser.id,type:'admin'},requestId:context.requestId??null}});
+      const response={id:orderId,orderNumber:orderCode};
+      await this.commercialIdempotency.complete(db,{recordId:claim.recordId,orderId,responseBody:response});
+      return {orderId,replayed:false};
     });
-
-    await this.auditService.log({
-      action: 'orders.manual_created',
-      storeId: currentUser.storeId,
-      storeUserId: currentUser.id,
-      targetType: 'order',
-      targetId: orderId,
-      ipAddress: context.ipAddress,
-      userAgent: context.userAgent,
-      metadata: { requestId: context.requestId },
-    });
-
-    await this.outboxService.enqueue({
-      aggregateType: 'order',
-      aggregateId: orderId,
-      eventType: 'order.created',
-      payload: {
-        orderId,
-        orderCode,
-        storeId: currentUser.storeId,
-        total: computation.total,
-        currencyCode: resolvedCurrency.currencyCode,
-        customerName: computation.customer.full_name,
-        customerId: computation.customer.id,
-        customerPhone: computation.customer.phone,
-        paymentMethod: computation.paymentMethod,
-        paymentStatus: 'pending',
-        orderStatus: 'new',
-        source: 'admin_manual',
-      },
-      headers: context.requestId ? { requestId: context.requestId } : {},
-    });
-
-    await this.webhooksService.dispatchEvent(currentUser.storeId, 'order.created', {
-      orderId,
-      orderCode,
-      status: 'new',
-      source: 'admin_manual',
-    });
-
-    return this.getById(currentUser, orderId);
+    return this.getById(currentUser,result.orderId);
   }
 
   async updateManual(
     currentUser: AuthUser,
     orderId: string,
     input: UpdateManualOrderDto,
+    idempotencyKey: string,
     context: RequestContextData,
   ): Promise<OrderDetailResponse> {
     const order = await this.requireOrder(currentUser.storeId, orderId);
@@ -454,32 +477,49 @@ export class OrdersService {
       ...(resolvedCity !== undefined ? { city: resolvedCity } : {}),
       ...(resolvedArea !== undefined ? { area: resolvedArea } : {}),
     };
-    const computation = await this.resolveManualOrderComputation(currentUser, updatePayload);
-
     const lowStockSignals: LowStockSignal[] = [];
     const backInStockSignals: BackInStockSignal[] = [];
 
+    const overrideRequested=(input.lines??[]).some((line)=>line.unitPriceOverride!==undefined||
+      (line.lineDiscount??0)>0);
+    if(overrideRequested){requireCommercialPermission(currentUser.permissions,'orders:manual-price-override');
+      requireReason(input.priceOverrideReason);}
     await this.ordersRepository.withTransaction(async (db) => {
+      const claim=await this.commercialIdempotency.claim(db,{storeId:currentUser.storeId,
+        operation:'admin.order.edit',key:idempotencyKey,actorId:currentUser.id,
+        payload:{orderId,...input}});
+      if(claim.kind==='replay')return;
+      const locked=await db.query<{status:string;fulfillment_status:string;version:string}>(
+        `SELECT status,fulfillment_status,version::text FROM orders
+         WHERE store_id=$1 AND id=$2 FOR UPDATE`,[currentUser.storeId,orderId]);
+      const lockedOrder=locked.rows[0];
+      if(!lockedOrder)throw new NotFoundException('Order not found');
+      if(lockedOrder.status!=='new'||lockedOrder.fulfillment_status!=='unfulfilled')
+        throw new CommercialDomainException('MANUAL_ORDER_EDIT_NOT_ALLOWED','Order is no longer editable');
+      if(Number(lockedOrder.version)!==input.expectedVersion)
+        throw new CommercialDomainException('ORDER_VERSION_CONFLICT','Order version does not match');
+      const lockedPayment=await db.query<{status:string;version:string}>(
+        'SELECT status,version::text FROM payments WHERE store_id=$1 AND order_id=$2 FOR UPDATE',
+        [currentUser.storeId,orderId]);
+      if(!lockedPayment.rows[0]||['approved','partially_refunded','refunded'].includes(lockedPayment.rows[0].status))
+        throw new CommercialDomainException('MANUAL_ORDER_EDIT_NOT_ALLOWED','Payment state blocks editing');
+      const consumed=await db.query('SELECT 1 FROM inventory_reservations WHERE store_id=$1 AND order_id=$2 AND status=$3 FOR UPDATE',
+        [currentUser.storeId,orderId,'consumed']);
+      if(consumed.rows[0])throw new CommercialDomainException('MANUAL_ORDER_EDIT_NOT_ALLOWED','Consumed inventory blocks editing');
+      await db.query('SELECT id FROM coupon_usages WHERE store_id=$1 AND order_id=$2 FOR UPDATE',
+        [currentUser.storeId,orderId]);
       await this.inventoryService.releaseExpiredReservationsInTransaction(db, currentUser.storeId);
+      const computation = await this.resolveManualOrderComputation(currentUser, updatePayload, db);
 
-      if (order.status === 'new') {
-        await this.inventoryService.releaseOrderReservations(db, {
+      await this.inventoryService.releaseOrderReservations(db, {
           storeId: currentUser.storeId,
           orderId,
           reason: 'order_manual_updated',
-        });
-      } else {
-        const restockSignals = await this.inventoryService.restockOrderSales(db, {
-          storeId: currentUser.storeId,
-          orderId,
           actorId: currentUser.id,
-          note: 'Stock returned before manual order update',
-          movementType: 'return',
+          actorType: 'admin',
         });
-        backInStockSignals.push(...restockSignals);
-      }
 
-      await this.ordersRepository.updateOrderManual(db, {
+      const updated=await this.ordersRepository.updateOrderManual(db, {
         orderId,
         storeId: currentUser.storeId,
         customerId: computation.customer.id,
@@ -493,10 +533,15 @@ export class OrdersService {
         couponCode: computation.couponCode,
         note: computation.note,
         shippingAddress: computation.shippingAddress,
+        expectedVersion: input.expectedVersion,
       });
+      if(!updated)throw new CommercialDomainException('ORDER_VERSION_CONFLICT','Order changed concurrently');
 
       await this.ordersRepository.deleteOrderItems(db, { storeId: currentUser.storeId, orderId });
-      await this.persistOrderItems(db, currentUser.storeId, orderId, computation.lines);
+      await this.persistOrderItems(db, currentUser.storeId, orderId, computation.lines,
+        computation.couponDiscount,computation.couponEligibleVariantIds,order.currency_code, {
+          actorId: currentUser.id, reason: input.priceOverrideReason?.trim() ?? null,
+        });
 
       if (computation.inventoryItems.length > 0) {
         await this.inventoryService.reserveOrderItems(db, {
@@ -505,96 +550,68 @@ export class OrdersService {
           expiresAt: this.buildReservationExpiryDate(),
           items: computation.inventoryItems,
           metadata: { source: 'admin.manual_order.update' },
-        });
-      }
-
-      if (order.status !== 'new' && computation.inventoryItems.length > 0) {
-        const confirmSignals = await this.inventoryService.confirmReservedOrderItems(db, {
-          storeId: currentUser.storeId,
-          orderId,
-          items: computation.inventoryItems,
           actorId: currentUser.id,
+          actorType: 'admin',
         });
-        lowStockSignals.push(...confirmSignals);
       }
 
-      if (EDITABLE_PAYMENT_STATUSES.includes(payment.status as PaymentStatus)) {
-        await this.ordersRepository.updateOrderPayment(db, {
+      if (EDITABLE_PAYMENT_STATUSES.includes(lockedPayment.rows[0].status as PaymentStatus)) {
+        const paymentUpdated = await this.ordersRepository.updateOrderPayment(db, {
           storeId: currentUser.storeId,
           orderId,
           method: computation.paymentMethod,
           amount: computation.total,
+          expectedStatus: lockedPayment.rows[0].status,
+          expectedVersion: Number(lockedPayment.rows[0].version),
         });
+        if (!paymentUpdated) throw new CommercialDomainException(
+          'PAYMENT_TRANSITION_CONFLICT', 'Payment changed concurrently');
       }
 
-      if (
-        computation.couponId &&
-        computation.couponCode &&
-        computation.couponCode !== (order.coupon_code ?? null)
-      ) {
-        await this.promotionsService.increaseCouponUsageInTransaction(
-          db,
-          currentUser.storeId,
-          computation.couponId,
-        );
-      }
+      await this.promotionsService.reverseCouponInTransaction(db,{storeId:currentUser.storeId,
+        orderId,reason:'manual_order_updated'});
+      if(computation.couponId)await this.promotionsService.consumeCouponInTransaction(db,{
+          storeId:currentUser.storeId,couponId:computation.couponId,orderId,
+          customerId:computation.customer.id,discountAmount:computation.couponDiscount,
+          currencyCode:order.currency_code,subtotal:computation.subtotal,
+          productIds:computation.lines.map((line)=>line.productId),categoryIds:computation.lines.map((line)=>line.categoryId).filter((id)=>id!==null) as string[]});
+      await this.ordersRepository.insertOrderStatusHistory(db, {
+        storeId: currentUser.storeId, orderId, fromStatus: 'new', toStatus: 'new',
+        actorId: currentUser.id, actorType: 'admin', command: 'editManualOrder',
+        reason: 'Manual order commercial snapshot updated', requestId: context.requestId,
+        idempotencyRecordId: claim.recordId,
+        businessKey: `order:${orderId}:manual_edit:${input.expectedVersion}`,
+      });
+      await this.auditService.log({action:'orders.manual_updated',storeId:currentUser.storeId,
+        storeUserId:currentUser.id,targetType:'order',targetId:orderId,
+        ipAddress:context.ipAddress,userAgent:context.userAgent,
+        beforeSnapshot:{version:input.expectedVersion},afterSnapshot:{version:input.expectedVersion+1},
+        metadata:{requestId:context.requestId,priceOverride:overrideRequested,
+          priceOverrideReason:overrideRequested?input.priceOverrideReason?.trim():null}},db);
+      await this.outboxService.enqueueInTransaction(db,{aggregateType:'order',aggregateId:orderId,
+        eventType:'order.updated',deduplicationKey:`order.updated:${orderId}:${input.expectedVersion+1}`,
+        payload:{storeId:currentUser.storeId,orderId,orderNumber:order.order_code,
+          totalAmount:this.decimal(computation.total),currency:order.currency_code,
+          version:input.expectedVersion+1,actor:{id:currentUser.id,type:'admin'},
+          requestId:context.requestId??null}});
+      await this.commercialIdempotency.complete(db,{recordId:claim.recordId,orderId,
+        responseBody:{id:orderId,version:input.expectedVersion+1}});
     });
 
     await this.inventoryService.publishLowStockAlerts(lowStockSignals);
     await this.inventoryService.publishBackInStockAlerts(backInStockSignals);
-
-    await this.auditService.log({
-      action: 'orders.manual_updated',
-      storeId: currentUser.storeId,
-      storeUserId: currentUser.id,
-      targetType: 'order',
-      targetId: orderId,
-      ipAddress: context.ipAddress,
-      userAgent: context.userAgent,
-      metadata: {
-        fromStatus: order.status,
-        requestId: context.requestId,
-      },
-    });
-
-    await this.outboxService.enqueue({
-      aggregateType: 'order',
-      aggregateId: orderId,
-      eventType: 'order.updated',
-      payload: {
-        orderId,
-        orderCode: order.order_code,
-        storeId: currentUser.storeId,
-        total: computation.total,
-        currencyCode: order.currency_code,
-        customerName: computation.customer.full_name,
-        customerId: computation.customer.id,
-        customerPhone: computation.customer.phone,
-        paymentMethod: computation.paymentMethod,
-        paymentStatus: payment.status,
-        orderStatus: order.status,
-        source: 'admin_manual',
-      },
-      headers: context.requestId ? { requestId: context.requestId } : {},
-    });
-
-    await this.webhooksService.dispatchEvent(currentUser.storeId, 'order.updated', {
-      orderId,
-      orderCode: order.order_code,
-      status: order.status,
-      source: 'admin_manual',
-    });
 
     return this.getById(currentUser, orderId);
   }
 
   async getById(currentUser: AuthUser, orderId: string): Promise<OrderDetailResponse> {
     const order = await this.requireOrder(currentUser.storeId, orderId);
-    const [items, timeline, payment, listRow] = await Promise.all([
+    const [items, timeline, payment, listRow, evidence] = await Promise.all([
       this.ordersRepository.listOrderItems(orderId),
       this.ordersRepository.listOrderStatusHistory(orderId),
       this.ordersRepository.findPaymentByOrderId(orderId),
       this.ordersRepository.findOrderListRowById(currentUser.storeId, orderId),
+      this.ordersRepository.listCommercialDetailEvidence(currentUser.storeId, orderId),
     ]);
     const mappedOrder = listRow ? this.mapListOrder(listRow) : this.mapOrder(order);
 
@@ -602,12 +619,30 @@ export class OrdersService {
       ...mappedOrder,
       items: items.map((item) => this.mapOrderItem(item)),
       timeline: timeline.map((entry) => this.mapOrderHistory(entry)),
+      fulfillmentHistory: evidence.fulfillment.map((entry)=>({from:entry.from_status,to:entry.to_status,
+        command:entry.command,reason:entry.reason,actorType:entry.actor_type,
+        createdAt:entry.created_at.toISOString()})),
+      paymentHistory: evidence.payment.map((entry)=>({from:entry.from_status,to:entry.to_status,
+        command:entry.command,reason:entry.reason,actorType:entry.actor_type,
+        createdAt:entry.created_at.toISOString()})),
+      inventoryReservations: evidence.reservations.map((entry)=>({id:entry.id,variantId:entry.variant_id,
+        quantity:entry.quantity,status:entry.status,reservedAt:entry.reserved_at.toISOString(),
+        expiresAt:entry.expires_at.toISOString(),releasedAt:entry.released_at?.toISOString()??null,
+        consumedAt:entry.consumed_at?.toISOString()??null,releaseReason:entry.release_reason})),
+      auditTimeline: evidence.audit.map((entry)=>({action:entry.action,actorType:entry.actor_type,
+        before:entry.before_snapshot,after:entry.after_snapshot,metadata:entry.metadata,
+        createdAt:entry.created_at.toISOString()})),
       payment: payment
         ? {
             id: payment.id,
             method: payment.method,
             status: payment.status,
-            amount: Number(payment.amount),
+            statusLabel: this.statusLabel(payment.status),
+            amount: payment.amount,
+            paidAmount: payment.paid_amount,
+            refundedAmount: payment.refunded_amount,
+            refundableAmount: this.decimal(Math.max(0, Number(payment.paid_amount)-Number(payment.refunded_amount))),
+            currency: payment.currency_code,
             receiptUrl: payment.receipt_url,
             paymentMethodCode: payment.payment_method_code,
             paymentMethodName: payment.payment_method_name,
@@ -621,97 +656,42 @@ export class OrdersService {
             payerReceiptUrl: payment.payer_receipt_url,
             payerReceiptMediaAssetId: payment.payer_receipt_media_asset_id,
             payerNote: payment.payer_note,
-            customerSubmittedAt: payment.customer_submitted_at,
+            customerSubmittedAt: payment.customer_submitted_at?.toISOString() ?? null,
             reviewedBy: payment.reviewed_by,
-            reviewedAt: payment.reviewed_at,
+            reviewedAt: payment.reviewed_at?.toISOString() ?? null,
             reviewNote: payment.review_note,
           }
         : null,
+      allowedTransitions: this.allowedTransitions(currentUser, order, payment),
     };
   }
 
-  async updateStatus(
-    currentUser: AuthUser,
-    orderId: string,
-    input: UpdateOrderStatusDto,
-    context: RequestContextData,
-  ): Promise<OrderDetailResponse> {
-    const order = await this.requireOrder(currentUser.storeId, orderId);
-    this.ensureTransitionAllowed(order.status, input.status);
+  confirmOrder(currentUser: AuthUser, orderId: string, input: OrderCommandDto, idempotencyKey: string,
+    context: RequestContextData) {
+    return this.orderTransitions.confirmOrder(this.commandInput(currentUser, orderId, input, idempotencyKey, context));
+  }
 
-    const lowStockSignals: LowStockSignal[] = [];
-    const backInStockSignals: BackInStockSignal[] = [];
-    let loyaltyCustomerId: string | null = null;
+  cancelOrder(currentUser: AuthUser, orderId: string, input: OrderCommandDto, idempotencyKey: string,
+    context: RequestContextData) {
+    return this.orderTransitions.cancelOrder(this.commandInput(currentUser, orderId, input, idempotencyKey, context));
+  }
 
-    await this.ordersRepository.withTransaction(async (db) => {
-      await this.inventoryService.releaseExpiredReservationsInTransaction(db, currentUser.storeId);
-      const transitionSignals = await this.applyInventoryTransition(db, {
-        orderId,
-        currentStatus: order.status,
-        nextStatus: input.status,
-        storeId: currentUser.storeId,
-        actorId: currentUser.id,
-      });
-      lowStockSignals.push(...transitionSignals.lowStockSignals);
-      backInStockSignals.push(...transitionSignals.backInStockSignals);
+  completeOrder(currentUser: AuthUser, orderId: string, input: OrderCommandDto, idempotencyKey: string,
+    context: RequestContextData) {
+    return this.orderTransitions.completeOrder(this.commandInput(currentUser, orderId, input, idempotencyKey, context));
+  }
 
-      await this.ordersRepository.updateOrderStatus(db, {
-        orderId,
-        storeId: currentUser.storeId,
-        nextStatus: input.status,
-      });
-
-      await this.ordersRepository.insertOrderStatusHistory(db, {
-        storeId: currentUser.storeId,
-        orderId,
-        oldStatus: order.status,
-        newStatus: input.status,
-        changedBy: currentUser.id,
-        note: input.note?.trim() ?? null,
-      });
-
-      if (input.status === 'completed') {
-        await this.loyaltyService.handleOrderCompletedInTransaction(db, {
-          storeId: currentUser.storeId,
-          orderId,
-          createdByStoreUserId: currentUser.id,
-        });
-      }
-
-      if (input.status === 'cancelled' || input.status === 'returned') {
-        await this.loyaltyService.handleOrderCancelledOrReturnedInTransaction(db, {
-          storeId: currentUser.storeId,
-          orderId,
-          createdByStoreUserId: currentUser.id,
-        });
-      }
-      await this.affiliatesService.handleOrderStatusChangedInTransaction(db, {
-        storeId: currentUser.storeId,
-        orderId,
-        nextStatus: input.status,
-      });
-
-      const refreshedOrder = await this.ordersRepository.findOrderById(
-        currentUser.storeId,
-        orderId,
-      );
-      loyaltyCustomerId = refreshedOrder?.customer_id ?? null;
-    });
-
-    await this.inventoryService.publishLowStockAlerts(lowStockSignals);
-    await this.inventoryService.publishBackInStockAlerts(backInStockSignals);
-    await this.logAndPublishStatusChange(currentUser, order, input.status, input.note, context);
-    await this.webhooksService.dispatchEvent(currentUser.storeId, 'order.updated', {
+  private commandInput(currentUser: AuthUser, orderId: string, input: OrderCommandDto,
+    idempotencyKey: string, context: RequestContextData) {
+    return {
+      storeId: currentUser.storeId,
       orderId,
-      orderCode: order.order_code,
-      previousStatus: order.status,
-      status: input.status,
-      note: input.note?.trim() ?? null,
-    });
-    if (loyaltyCustomerId) {
-      await this.loyaltyService.publishWalletUpdated(currentUser.storeId, loyaltyCustomerId);
-    }
-    return this.getById(currentUser, orderId);
+      idempotencyKey,
+      reason: input.reason,
+      expectedVersion: input.expectedVersion,
+      actor: { id: currentUser.id, type: 'admin' as const, permissions: currentUser.permissions },
+      context,
+    };
   }
 
   private normalizeListFilters(
@@ -784,115 +764,6 @@ export class OrdersService {
     return order;
   }
 
-  private ensureTransitionAllowed(current: OrderStatus, next: OrderStatus): void {
-    if (current === next) {
-      throw new BadRequestException('Order is already in the requested status');
-    }
-
-    if (!canTransitionOrderStatus(current, next)) {
-      throw new BadRequestException(`Order cannot transition from ${current} to ${next}`);
-    }
-  }
-
-  private async applyInventoryTransition(
-    db: Queryable,
-    input: {
-      orderId: string;
-      currentStatus: OrderStatus;
-      nextStatus: OrderStatus;
-      storeId: string;
-      actorId: string | null;
-    },
-  ): Promise<{ lowStockSignals: LowStockSignal[]; backInStockSignals: BackInStockSignal[] }> {
-    if (input.currentStatus === 'new' && input.nextStatus === 'confirmed') {
-      const lowStockSignals = await this.inventoryService.confirmOrderReservations(db, {
-        storeId: input.storeId,
-        orderId: input.orderId,
-        actorId: input.actorId,
-        expiresAt: this.buildReservationExpiryDate(),
-      });
-      return { lowStockSignals, backInStockSignals: [] };
-    }
-
-    if (input.currentStatus === 'new' && input.nextStatus === 'cancelled') {
-      await this.releaseOrderReservations(db, input.storeId, input.orderId);
-      return { lowStockSignals: [], backInStockSignals: [] };
-    }
-
-    if (this.isCancellationAfterStockDeduction(input.currentStatus, input.nextStatus)) {
-      const backInStockSignals = await this.restockCancelledOrder(db, input);
-      return { lowStockSignals: [], backInStockSignals };
-    }
-
-    if (
-      (input.currentStatus === 'out_for_delivery' || input.currentStatus === 'completed') &&
-      input.nextStatus === 'returned'
-    ) {
-      const backInStockSignals = await this.restockReturnedOrder(db, input);
-      return { lowStockSignals: [], backInStockSignals };
-    }
-
-    return { lowStockSignals: [], backInStockSignals: [] };
-  }
-
-  private isCancellationAfterStockDeduction(
-    currentStatus: OrderStatus,
-    nextStatus: OrderStatus,
-  ): boolean {
-    return (
-      nextStatus === 'cancelled' &&
-      (currentStatus === 'confirmed' ||
-        currentStatus === 'preparing' ||
-        currentStatus === 'out_for_delivery')
-    );
-  }
-
-  private async releaseOrderReservations(
-    db: Queryable,
-    storeId: string,
-    orderId: string,
-  ): Promise<void> {
-    await this.inventoryService.releaseOrderReservations(db, {
-      storeId,
-      orderId,
-      reason: 'order_cancelled',
-    });
-  }
-
-  private async restockCancelledOrder(
-    db: Queryable,
-    input: {
-      orderId: string;
-      storeId: string;
-      actorId: string | null;
-    },
-  ): Promise<BackInStockSignal[]> {
-    return this.inventoryService.restockOrderSales(db, {
-      storeId: input.storeId,
-      orderId: input.orderId,
-      actorId: input.actorId,
-      note: 'Stock returned after order cancellation',
-      movementType: 'return',
-    });
-  }
-
-  private async restockReturnedOrder(
-    db: Queryable,
-    input: {
-      orderId: string;
-      storeId: string;
-      actorId: string | null;
-    },
-  ): Promise<BackInStockSignal[]> {
-    return this.inventoryService.restockOrderSales(db, {
-      storeId: input.storeId,
-      orderId: input.orderId,
-      actorId: input.actorId,
-      note: 'Stock returned from delivered order',
-      movementType: 'return',
-    });
-  }
-
   private async resolveManualOrderComputation(
     currentUser: AuthUser,
     input: {
@@ -915,6 +786,7 @@ export class OrdersService {
       city?: string | null;
       area?: string | null;
     },
+    db?: Queryable,
   ): Promise<ManualOrderComputation> {
     if (!input.customerId) {
       throw new BadRequestException('customerId is required');
@@ -923,12 +795,13 @@ export class OrdersService {
     const customer = await this.ordersRepository.findCustomerById(
       currentUser.storeId,
       input.customerId,
+      db,
     );
     if (!customer) {
       throw new NotFoundException('Customer not found');
     }
 
-    const lines = await this.resolveManualLines(currentUser.storeId, input.lines);
+    const lines = await this.resolveManualLines(currentUser.storeId, input.lines, db);
     if (lines.length === 0) {
       throw new BadRequestException('At least one order line is required');
     }
@@ -945,20 +818,25 @@ export class OrdersService {
     let couponId: string | null = null;
     let couponDiscount = 0;
     let couponIsFreeShipping = false;
+    let couponEligibleVariantIds: string[] = [];
 
     if (normalizedCouponCode) {
-      const coupon = await this.promotionsService.applyCoupon(currentUser, {
-        code: normalizedCouponCode,
-        subtotal: subtotal - lineDiscountTotal,
-      });
-      couponCode = coupon.code;
+      const coupon = await this.promotionsService.computeManualOrderCouponDiscount(
+        currentUser.storeId,
+        normalizedCouponCode,
+        lines,
+        new Date(),
+        db,
+      );
+      couponCode = coupon.couponCode;
       couponId = coupon.couponId;
-      couponDiscount = coupon.discount;
-      couponIsFreeShipping = coupon.isFreeShipping;
+      couponDiscount = coupon.couponDiscount;
+      couponIsFreeShipping = coupon.couponIsFreeShipping;
+      couponEligibleVariantIds = coupon.couponEligibleVariantIds;
     }
 
     const shippingZone = input.shippingZoneId
-      ? await this.shippingRepository.findActiveById(currentUser.storeId, input.shippingZoneId)
+      ? await this.shippingRepository.findActiveById(currentUser.storeId, input.shippingZoneId, db)
       : null;
     if (input.shippingZoneId && !shippingZone) {
       throw new BadRequestException('Shipping zone not found or inactive');
@@ -971,6 +849,7 @@ export class OrdersService {
             currentUser.storeId,
             shippingZone.id,
             true,
+            db,
           ),
           items: lines.map((line) => ({
             quantity: line.quantity,
@@ -1017,6 +896,7 @@ export class OrdersService {
       customer,
       shippingInput,
       selectedShipping?.type !== 'store_pickup',
+      db,
     );
 
     return {
@@ -1040,6 +920,8 @@ export class OrdersService {
       shippingFee,
       couponCode,
       couponId,
+      couponDiscount,
+      couponEligibleVariantIds,
       lines,
       inventoryItems: this.buildInventoryItems(lines),
       subtotal,
@@ -1058,6 +940,7 @@ export class OrdersService {
       unitPriceOverride?: number;
       lineDiscount?: number;
     }>,
+    db?: Queryable,
   ): Promise<ManualResolvedLine[]> {
     if (!Array.isArray(inputLines) || inputLines.length === 0) {
       return [];
@@ -1095,7 +978,7 @@ export class OrdersService {
 
     const resolved: ManualResolvedLine[] = [];
     for (const [variantId, merged] of mergedByVariant.entries()) {
-      const variant = await this.requireManualVariant(storeId, variantId);
+      const variant = await this.requireManualVariant(storeId, variantId, db);
       const unitPrice = merged.unitPriceOverride ?? Number(variant.price);
       if (unitPrice < 0) {
         throw new BadRequestException('Unit price cannot be negative');
@@ -1110,8 +993,10 @@ export class OrdersService {
       resolved.push({
         productId: variant.product_id,
         variantId: variant.variant_id,
+        categoryId: variant.category_id,
         title: this.resolveVariantTitle(variant),
         sku: variant.sku,
+        catalogUnitPrice: Number(Number(variant.price).toFixed(2)),
         unitPrice: Number(unitPrice.toFixed(2)),
         quantity: merged.quantity,
         lineDiscount: Number(merged.lineDiscount.toFixed(2)),
@@ -1128,8 +1013,9 @@ export class OrdersService {
   private async requireManualVariant(
     storeId: string,
     variantId: string,
+    db?: Queryable,
   ): Promise<StoreVariantSnapshot> {
-    const variant = await this.ordersRepository.findVariantForStore(storeId, variantId);
+    const variant = await this.ordersRepository.findVariantForStore(storeId, variantId, db);
     if (!variant || variant.product_status !== 'active' || !variant.product_is_visible) {
       throw new NotFoundException('Variant not found or inactive');
     }
@@ -1154,6 +1040,7 @@ export class OrdersService {
       note?: string;
     },
     requireAddressLine = true,
+    db?: Queryable,
   ): Promise<Record<string, unknown>> {
     let selectedAddress: CustomerAddressSummaryRow | null = null;
     if (input.customerAddressId) {
@@ -1161,6 +1048,7 @@ export class OrdersService {
         storeId,
         customer.id,
         input.customerAddressId,
+        db,
       );
       if (!selectedAddress) {
         throw new BadRequestException('Customer address not found');
@@ -1208,111 +1096,99 @@ export class OrdersService {
     storeId: string,
     orderId: string,
     lines: ManualResolvedLine[],
+    couponDiscount: number,
+    couponEligibleVariantIds: string[],
+    currencyCode: string,
+    overrideAudit: { actorId: string; reason: string | null },
   ): Promise<void> {
+    const snapshotAt = new Date().toISOString();
+    const couponAllocation=allocateLargestRemainder(lines.filter(l => couponEligibleVariantIds.includes(l.variantId)).map((line)=>({key:line.variantId,
+      amount:Number((line.unitPrice*line.quantity-line.lineDiscount).toFixed(2))})),couponDiscount);
     for (const line of lines) {
+      const lineSubtotal=Number((line.unitPrice*line.quantity).toFixed(2));
+      const lineDiscount=Number((line.lineDiscount+(couponAllocation.get(line.variantId)??0)).toFixed(2));
+      const lineTotal=Number((lineSubtotal-lineDiscount).toFixed(2));
       await this.ordersRepository.insertOrderItem(db, {
         orderId,
         storeId,
         productId: line.productId,
         variantId: line.variantId,
         title: line.title,
+        variantName: '',
         sku: line.sku,
         unitPrice: line.unitPrice,
         unitPriceYER: line.unitPrice,
         quantity: line.quantity,
-        lineTotal: line.lineTotal,
-        lineTotalYER: line.lineTotal,
-        attributes: line.attributes,
+        lineTotal,
+        lineTotalYER: lineTotal,
+        attributes: {
+          ...line.attributes,
+          _catalogUnitPrice: line.catalogUnitPrice.toFixed(2),
+          _manualUnitPrice: line.unitPrice.toFixed(2),
+          _manualPriceOverridden: String(line.catalogUnitPrice !== line.unitPrice || line.lineDiscount > 0),
+          _manualPriceOverrideActorId: overrideAudit.actorId,
+          _manualPriceOverrideReason: overrideAudit.reason ?? '',
+          _manualPriceSnapshotAt: snapshotAt,
+        },
+        currencyCode,
+        productImage: null,
+        discountAmount: lineDiscount,
+        finalUnitPrice: Number((lineTotal/line.quantity).toFixed(2)),
+        lineSubtotal,
+        lineDiscount,
+        taxSnapshot: {
+          policy: 'not_configured',
+          taxable: false,
+          rate: '0.00',
+          amount: '0.00',
+          includedInPrice: true,
+        },
       });
     }
-  }
-
-  private async logAndPublishStatusChange(
-    currentUser: AuthUser,
-    order: OrderRecord,
-    nextStatus: OrderStatus,
-    note: string | undefined,
-    context: RequestContextData,
-  ): Promise<void> {
-    await this.auditService.log({
-      action: 'orders.status_updated',
-      storeId: currentUser.storeId,
-      storeUserId: currentUser.id,
-      targetType: 'order',
-      targetId: order.id,
-      ipAddress: context.ipAddress,
-      userAgent: context.userAgent,
-      metadata: {
-        from: order.status,
-        to: nextStatus,
-        note: note ?? null,
-        requestId: context.requestId,
-      },
-    });
-
-    await this.outboxService.enqueue({
-      aggregateType: 'order',
-      aggregateId: order.id,
-      eventType: 'order.status.changed',
-      payload: {
-        orderId: order.id,
-        orderCode: order.order_code,
-        from: order.status,
-        to: nextStatus,
-        storeId: currentUser.storeId,
-        customerId: order.customer_id,
-        total: Number(order.total),
-        currencyCode: order.currency_code,
-        orderStatus: nextStatus,
-        source: 'admin_status_update',
-      },
-      headers: context.requestId ? { requestId: context.requestId } : {},
-    });
   }
 
   private mapOrder(order: OrderRecord): OrderResponse {
     return {
       id: order.id,
-      orderCode: order.order_code,
+      orderNumber: order.order_code,
       status: order.status,
-      subtotal: Number(order.subtotal),
-      total: Number(order.total),
-      currencyCode: order.currency_code,
+      statusLabel: this.statusLabel(order.status),
+      fulfillment: { type: order.fulfillment_type, status: order.fulfillment_status,
+        statusLabel: this.statusLabel(order.fulfillment_status) },
+      totals: this.orderTotals(order),
+      version: Number(order.version),
       note: order.note,
-      createdAt: order.created_at,
-      updatedAt: order.updated_at,
+      createdAt: order.created_at.toISOString(),
+      updatedAt: order.updated_at.toISOString(),
       customer: {
         id: null,
         name: null,
         phone: null,
       },
-      paymentMethod: null,
-      paymentMethodCode: null,
-      paymentMethodName: null,
-      paymentStatus: null,
+      paymentSummary: { method: null, methodCode: null, methodName: null, status: null },
     };
   }
 
   private mapListOrder(order: OrderListRow): OrderResponse {
     return {
       id: order.id,
-      orderCode: order.order_code,
+      orderNumber: order.order_code,
       status: order.status,
-      subtotal: Number(order.subtotal),
-      total: Number(order.total),
-      currencyCode: order.currency_code,
+      statusLabel: this.statusLabel(order.status),
+      fulfillment: { type: order.fulfillment_type, status: order.fulfillment_status,
+        statusLabel: this.statusLabel(order.fulfillment_status) },
+      totals: this.orderTotals(order),
+      version: Number(order.version),
       note: order.note,
-      createdAt: order.created_at,
-      updatedAt: order.updated_at,
+      createdAt: order.created_at.toISOString(),
+      updatedAt: order.updated_at.toISOString(),
       customer: {
         id: order.customer_id,
         name: order.customer_name,
         phone: order.customer_phone,
       },
-      paymentMethod: order.payment_method,
-      paymentMethodCode: order.payment_method_code,
-      paymentMethodName: order.payment_method_name,
-      paymentStatus: order.payment_status,
+      paymentSummary: { method: order.payment_method, methodCode: order.payment_method_code,
+        methodName: order.payment_method_name, status: order.payment_status },
     };
   }
 
@@ -1322,20 +1198,89 @@ export class OrdersService {
       productId: item.product_id,
       variantId: item.variant_id,
       title: item.title,
+      productName: item.product_name,
+      variantName: item.variant_name,
       sku: item.sku,
-      unitPrice: Number(item.unit_price),
+      unitPrice: item.unit_price,
+      finalUnitPrice: item.final_unit_price,
+      discountAmount: item.discount_amount,
+      currency: item.currency_code,
+      productImage: item.product_image,
+      attributes: item.attributes_snapshot,
+      tax: item.tax_snapshot,
       quantity: item.quantity,
-      lineTotal: Number(item.line_total),
+      lineSubtotal: item.line_subtotal,
+      lineDiscount: item.line_discount,
+      lineTotal: item.line_total,
     };
   }
 
   private mapOrderHistory(entry: OrderStatusHistoryRecord) {
     return {
-      from: entry.old_status,
-      to: entry.new_status,
-      note: entry.note,
-      createdAt: entry.created_at,
+      from: entry.from_status,
+      to: entry.to_status,
+      note: entry.reason,
+      createdAt: entry.created_at.toISOString(),
     };
+  }
+
+  private orderTotals(order: OrderRecord) {
+    return { subtotalAmount: order.subtotal, discountAmount: order.discount_total,
+      shippingAmount: order.shipping_fee, taxAmount: order.tax_amount, totalAmount: order.total,
+      paidAmount: order.paid_amount, refundedAmount: order.refunded_amount,
+      refundableAmount: this.decimal(Math.max(0,Number(order.paid_amount)-Number(order.refunded_amount))),
+      currency: order.currency_code };
+  }
+
+  private decimal(value:number):string { return value.toFixed(2); }
+  private statusLabel(status:string):string {
+    return ({new:'New',confirmed:'Confirmed',completed:'Completed',cancelled:'Cancelled',
+      unfulfilled:'Unfulfilled',preparing:'Preparing',ready:'Ready',out_for_delivery:'Out for delivery',
+      fulfilled:'Fulfilled',failed:'Failed',pending:'Pending',submitted:'Submitted',
+      under_review:'Under review',approved:'Approved',rejected:'Rejected',expired:'Expired',
+      partially_refunded:'Partially refunded',refunded:'Refunded'} as Record<string,string>)[status]??status;
+  }
+
+  private allowedTransitions(
+    user:AuthUser,
+    order:OrderRecord,
+    payment:{status:string;method:string;payment_method_code:string|null;paid_amount:string;amount:string;
+      expires_at:Date|null}|null,
+  ) {
+    const has=(permission:string)=>user.permissions.includes('*')||user.permissions.includes(permission);
+    const orderTransitions=Object.entries(ORDER_TRANSITION_RULES).filter(([,rule])=>
+      rule.from===order.status&&has(rule.permission)&&
+      (rule.to!=='cancelled'||(order.fulfillment_status!=='fulfilled'&&
+        !['approved','partially_refunded','refunded'].includes(payment?.status??'')))&&
+      (rule.to!=='completed'||(order.fulfillment_status==='fulfilled'&&payment?.status==='approved'&&
+        Number(payment.paid_amount)>0&&Number(payment.paid_amount)===Number(payment.amount))))
+      .map(([command,rule])=>({command,toStatus:rule.to,
+        requiresReason:rule.requiresReason}));
+    if(order.status==='confirmed'&&has('orders:cancel')&&order.fulfillment_status!=='fulfilled'&&
+      !['approved','partially_refunded','refunded'].includes(payment?.status??''))orderTransitions.push({command:'cancelOrder',
+      toStatus:'cancelled',requiresReason:true});
+    const paymentMethod=payment?.payment_method_code??payment?.method??null;
+    const paymentGate=paymentMethod==='cod'?['pending','approved'].includes(payment?.status??''):
+      payment?.status==='approved';
+    const fulfillment=Object.entries(FULFILLMENT_RULES).filter(([command,rule])=>order.status==='confirmed'&&
+      rule.from.includes(order.fulfillment_status)&&rule.types.includes(order.fulfillment_type)&&has(rule.permission)&&
+      (!rule.paymentGate||paymentGate)&&
+      (command!=='overrideStartPreparing'||!paymentGate)&&
+      (command!=='markFulfilled'||(order.fulfillment_type==='delivery'?
+        order.fulfillment_status==='out_for_delivery':order.fulfillment_status==='ready')))
+      .map(([command,rule])=>({command,toStatus:rule.to,requiresReason:rule.reasonRequired}));
+    const paymentTransitions=payment?Object.entries(PAYMENT_COMMAND_RULES).filter(([command,rule])=>
+      rule.from.includes(payment.status as PaymentStatus)&&has(rule.permission)&&
+      (!['submitPaymentProof','resubmitPaymentProof','startPaymentReview','approvePayment','rejectPayment']
+        .includes(command)||paymentMethod!=='cod')&&
+      (command!=='collectCodPayment'||(paymentMethod==='cod'&&order.status==='confirmed'&&
+        order.fulfillment_status==='fulfilled'))&&
+      (command!=='expirePayment'||(paymentMethod!=='cod'&&payment.expires_at!==null&&
+        payment.expires_at<=new Date()))&&
+      (command!=='cancelPayment'||payment.status!=='under_review'||
+        ['unfulfilled','cancelled'].includes(order.fulfillment_status))).map(([command,rule])=>
+      ({command,toStatus:rule.to,requiresReason:rule.reasonRequired})):[];
+    return {order:orderTransitions,fulfillment,payment:paymentTransitions};
   }
 
   private mapManualProduct(row: ManualProductSearchRow) {
@@ -1364,17 +1309,6 @@ export class OrdersService {
       return 15;
     }
     return raw;
-  }
-
-  private async generateOrderCode(storeId: string): Promise<string> {
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const candidate = `KS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-      const existing = await this.ordersRepository.findOrderByCode(storeId, candidate);
-      if (!existing) {
-        return candidate;
-      }
-    }
-    throw new BadRequestException('Failed to generate a unique order code');
   }
 
   private resolveVariantTitle(variant: StoreVariantSnapshot): string {

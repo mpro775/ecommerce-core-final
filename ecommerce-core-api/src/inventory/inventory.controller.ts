@@ -71,7 +71,7 @@ export class InventoryController {
   }
 
   @Post('variants/:variantId/adjustments')
-  @RequirePermissions(PERMISSIONS.inventoryWrite)
+  @RequirePermissions(PERMISSIONS.inventoryAdjust)
   @ApiOkResponse({ description: 'Adjust variant stock and create movement record' })
   async adjustVariant(
     @CurrentUser() currentUser: AuthUser,

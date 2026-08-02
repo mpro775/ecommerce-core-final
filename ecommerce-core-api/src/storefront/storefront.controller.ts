@@ -13,7 +13,7 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
-import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { ApiHeader, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { Public } from '../auth/decorators/public.decorator';
 import { AddCartItemDto } from './dto/add-cart-item.dto';
@@ -24,6 +24,7 @@ import { TrackStorefrontEventDto } from './dto/track-storefront-event.dto';
 import { TrackOrderQueryDto } from './dto/track-order-query.dto';
 import { UpdateCartItemDto } from './dto/update-cart-item.dto';
 import { StorefrontService } from './storefront.service';
+import { CHECKOUT_ERROR_CODES, CheckoutDomainException } from '../checkout/checkout.errors';
 
 @ApiTags('storefront')
 @Controller('app')
@@ -59,24 +60,6 @@ export class StorefrontController {
   @ApiOkResponse({ description: 'Get storefront product details' })
   async getProduct(@Req() request: Request, @Param('slug') slug: string) {
     return this.storefrontService.getProductDetails(request, slug);
-  }
-
-  @Get('policies')
-  @ApiOkResponse({ description: 'Get storefront public policies' })
-  async getPolicies(@Req() request: Request) {
-    return this.storefrontService.getPolicies(request);
-  }
-
-  @Get('pages')
-  @ApiOkResponse({ description: 'Get published storefront pages' })
-  async listPages(@Req() request: Request) {
-    return this.storefrontService.listPages(request);
-  }
-
-  @Get('pages/:slug')
-  @ApiOkResponse({ description: 'Get published storefront page by slug' })
-  async getPageBySlug(@Req() request: Request, @Param('slug') slug: string) {
-    return this.storefrontService.getPageBySlug(request, slug);
   }
 
   @Post('events')
@@ -168,10 +151,21 @@ export class StorefrontController {
 
   @Post('checkout')
   @HttpCode(HttpStatus.OK)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: true,
+    description: 'Opaque client-generated key (16-200 characters) scoped to storefront.checkout',
+  })
   @ApiOkResponse({ description: 'Checkout active cart and create order' })
-  async checkout(@Req() request: Request, @Body() body: CheckoutDto) {
+  async checkout(
+    @Req() request: Request,
+    @Body() body: CheckoutDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
     const idempotencyKey = this.extractIdempotencyKey(request);
-    return this.storefrontService.checkout(request, body, idempotencyKey);
+    const result = await this.storefrontService.checkout(request, body, idempotencyKey);
+    response.status(result.status);
+    return result.body;
   }
 
   @Post('checkout/quote')
@@ -205,11 +199,23 @@ export class StorefrontController {
     return this.storefrontService.trackOrder(request, orderCode, query.phone);
   }
 
-  private extractIdempotencyKey(request: Request): string | undefined {
+  private extractIdempotencyKey(request: Request): string {
     const key = request.headers['idempotency-key'];
     if (typeof key === 'string' && key.trim().length > 0) {
-      return key.trim();
+      const normalized = key.trim();
+      if (normalized.length < 16 || normalized.length > 200) {
+        throw new CheckoutDomainException(
+          CHECKOUT_ERROR_CODES.IDEMPOTENCY_KEY_INVALID,
+          'Idempotency-Key must contain between 16 and 200 characters',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      return normalized;
     }
-    return undefined;
+    throw new CheckoutDomainException(
+      CHECKOUT_ERROR_CODES.IDEMPOTENCY_KEY_REQUIRED,
+      'Idempotency-Key header is required',
+      HttpStatus.BAD_REQUEST,
+    );
   }
 }

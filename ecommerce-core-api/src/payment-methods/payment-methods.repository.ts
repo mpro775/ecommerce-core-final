@@ -129,7 +129,7 @@ export class PaymentMethodsRepository {
     return result.rows;
   }
 
-  async findPlatformById(id: string): Promise<PaymentMethodCatalogRecord | null> {
+  async findCatalogById(id: string): Promise<PaymentMethodCatalogRecord | null> {
     const result = await this.databaseService.db.query<PaymentMethodCatalogRecord>(
       `
         SELECT ${CATALOG_FIELDS}
@@ -142,13 +142,17 @@ export class PaymentMethodsRepository {
     return result.rows[0] ?? null;
   }
 
-  async findPlatformByCode(code: string): Promise<PaymentMethodCatalogRecord | null> {
-    const result = await this.databaseService.db.query<PaymentMethodCatalogRecord>(
+  async findCatalogByCode(
+    code: string,
+    db?: Queryable,
+  ): Promise<PaymentMethodCatalogRecord | null> {
+    const result = await (db ?? this.databaseService.db).query<PaymentMethodCatalogRecord>(
       `
         SELECT ${CATALOG_FIELDS}
         FROM payment_method_catalog
         WHERE code = $1
         LIMIT 1
+        ${db ? 'FOR SHARE' : ''}
       `,
       [code],
     );
@@ -169,8 +173,8 @@ export class PaymentMethodsRepository {
     return result.rows;
   }
 
-  async listStorefront(storeId: string): Promise<StorefrontPaymentMethodRecord[]> {
-    const result = await this.databaseService.db.query<StorefrontPaymentMethodRecord>(
+  async listStorefront(storeId: string, db?: Queryable): Promise<StorefrontPaymentMethodRecord[]> {
+    const result = await (db ?? this.databaseService.db).query<StorefrontPaymentMethodRecord>(
       `
         SELECT ${STORE_FIELDS}
         FROM store_payment_methods spm
@@ -179,6 +183,7 @@ export class PaymentMethodsRepository {
           AND spm.is_enabled = TRUE
           AND ppm.is_enabled = TRUE
         ORDER BY spm.sort_order ASC, ppm.sort_order ASC, spm.created_at ASC
+        ${db ? 'FOR SHARE OF spm, ppm' : ''}
       `,
       [storeId],
     );
@@ -203,8 +208,9 @@ export class PaymentMethodsRepository {
   async findEnabledStoreById(
     storeId: string,
     id: string,
+    db?: Queryable,
   ): Promise<StorePaymentMethodRecord | null> {
-    const result = await this.databaseService.db.query<StorePaymentMethodRecord>(
+    const result = await (db ?? this.databaseService.db).query<StorePaymentMethodRecord>(
       `
         SELECT ${STORE_FIELDS}
         FROM store_payment_methods spm
@@ -214,17 +220,19 @@ export class PaymentMethodsRepository {
           AND spm.is_enabled = TRUE
           AND ppm.is_enabled = TRUE
         LIMIT 1
+        ${db ? 'FOR SHARE OF spm, ppm' : ''}
       `,
       [storeId, id],
     );
     return result.rows[0] ?? null;
   }
 
-  async findStoreByPlatformId(
+  async findStoreByCatalogId(
     storeId: string,
     paymentMethodCatalogId: string,
+    db?: Queryable,
   ): Promise<StorePaymentMethodRecord | null> {
-    const result = await this.databaseService.db.query<StorePaymentMethodRecord>(
+    const result = await (db ?? this.databaseService.db).query<StorePaymentMethodRecord>(
       `
         SELECT ${STORE_FIELDS}
         FROM store_payment_methods spm
@@ -232,6 +240,7 @@ export class PaymentMethodsRepository {
         WHERE spm.store_id = $1
           AND spm.payment_method_catalog_id = $2
         LIMIT 1
+        ${db ? 'FOR SHARE OF spm, ppm' : ''}
       `,
       [storeId, paymentMethodCatalogId],
     );
@@ -314,14 +323,16 @@ export class PaymentMethodsRepository {
       orderId: string;
       amount: number;
       amountYER?: number;
-      status: 'pending' | 'under_review';
+      currencyCode: string;
+      status: 'pending' | 'submitted';
       snapshot: PaymentMethodSnapshot;
       payerReference: string | null;
       payerReceiptMediaAssetId: string | null;
       payerReceiptUrl: string | null;
       payerNote: string | null;
     },
-  ): Promise<void> {
+  ): Promise<string> {
+    const paymentId = uuidv4();
     await db.query(
       `
         INSERT INTO payments (
@@ -331,18 +342,19 @@ export class PaymentMethodsRepository {
           account_name, account_number, phone_number, iban,
           instructions_ar, instructions_en,
           payer_reference, payer_receipt_media_asset_id, payer_receipt_url,
-          receipt_media_asset_id, receipt_url, payer_note, customer_submitted_at
+          receipt_media_asset_id, receipt_url, payer_note, customer_submitted_at,
+          currency_code, submission_version
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
           $8, $9, $10, $11,
           $12, $13, $14, $15,
           $16, $17,
           $18, $19, $20,
-          $19, $20, $21, $22
+          $19, $20, $21, $22, $23, CASE WHEN $5 = 'submitted' THEN 1 ELSE 0 END
         )
       `,
       [
-        uuidv4(),
+        paymentId,
         input.storeId,
         input.orderId,
         input.snapshot.methodCode,
@@ -363,8 +375,10 @@ export class PaymentMethodsRepository {
         input.payerReceiptMediaAssetId,
         input.payerReceiptUrl,
         input.payerNote,
-        input.status === 'under_review' ? new Date() : null,
+        input.status === 'submitted' ? new Date() : null,
+        input.currencyCode,
       ],
     );
+    return paymentId;
   }
 }

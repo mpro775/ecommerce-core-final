@@ -2,7 +2,6 @@ import { Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
-  IsEmail,
   IsIn,
   IsInt,
   IsNumber,
@@ -17,14 +16,9 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { STORE_SLUG_REGEX } from '../constants/store-slug.constants';
 import {
-  CURRENCY_PRICING_MODES,
-  CURRENCY_SYMBOL_POSITIONS,
   ORDER_CONFIRMATION_MODES,
-  STORE_BUSINESS_CATEGORIES,
   STORE_CURRENCY_CODES,
-  STORE_LANGUAGES,
   STORE_SOCIAL_LINK_KEYS,
   STORE_TIMEZONES,
   STORE_WORKING_DAYS,
@@ -58,52 +52,6 @@ class WorkingHoursDayDto {
   @ValidateNested({ each: true })
   @Type(() => WorkingHoursSlotDto)
   slots?: WorkingHoursSlotDto[];
-}
-
-class StoreProfileSettingsDto {
-  @IsOptional()
-  @IsString()
-  @MaxLength(400)
-  icon?: string | null;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(400)
-  iconUrl?: string | null;
-
-  @IsOptional()
-  @IsString()
-  @Matches(/^#[A-Fa-f0-9]{6}$/)
-  primaryColor?: string;
-
-  @IsOptional()
-  @IsString()
-  @Matches(/^#[A-Fa-f0-9]{6}$/)
-  secondaryColor?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(30)
-  supportPhone?: string | null;
-
-  @IsOptional()
-  @IsEmail()
-  @MaxLength(160)
-  supportEmail?: string | null;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(30)
-  whatsapp?: string | null;
-
-  @IsOptional()
-  @IsIn(STORE_LANGUAGES)
-  defaultLanguage?: (typeof STORE_LANGUAGES)[number];
-
-  @IsOptional()
-  @IsArray()
-  @IsIn(STORE_LANGUAGES, { each: true })
-  supportedLanguages?: Array<(typeof STORE_LANGUAGES)[number]>;
 }
 
 class OrderSettingsDto {
@@ -255,41 +203,6 @@ class MobileAppConfigDto {
   @MaxLength(1000)
   maintenanceMessage?: string | null;
 
-  @IsOptional()
-  @IsObject()
-  storeLinks?: Record<string, unknown>;
-
-  @IsOptional()
-  @IsObject()
-  socialLinks?: Record<string, unknown>;
-
-  @IsOptional()
-  @IsObject()
-  enabledFeatures?: Record<string, unknown>;
-
-  @IsOptional()
-  @IsBoolean()
-  showRegistration?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  showOtp?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  showWallet?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  showLoyalty?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  showAffiliates?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  showReviews?: boolean;
 }
 
 export class UpdateStoreSettingsDto {
@@ -325,15 +238,6 @@ export class UpdateStoreSettingsDto {
 
   @IsOptional()
   @IsString()
-  @Length(3, 50)
-  @Matches(STORE_SLUG_REGEX, {
-    message:
-      'Slug must be 3-50 chars and contain only lowercase letters, numbers, and hyphens. It must not start or end with a hyphen.',
-  })
-  slug?: string;
-
-  @IsOptional()
-  @IsString()
   @Length(3, 3)
   @IsIn(STORE_CURRENCY_CODES)
   currencyCode?: string;
@@ -343,29 +247,6 @@ export class UpdateStoreSettingsDto {
   @MaxLength(120)
   @IsIn(STORE_TIMEZONES)
   timezone?: string;
-
-  @IsOptional()
-  @IsUUID('4')
-  logoMediaAssetId?: string | null;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(400)
-  logoUrl?: string | null;
-
-  @IsOptional()
-  @IsUUID('4')
-  faviconMediaAssetId?: string | null;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(400)
-  faviconUrl?: string | null;
-
-  @IsOptional()
-  @IsString()
-  @IsIn(STORE_BUSINESS_CATEGORIES)
-  businessCategory?: (typeof STORE_BUSINESS_CATEGORIES)[number] | null;
 
   @IsOptional()
   @IsString()
@@ -416,40 +297,6 @@ export class UpdateStoreSettingsDto {
   @IsOptional()
   @IsObject()
   socialLinks?: Partial<Record<(typeof STORE_SOCIAL_LINK_KEYS)[number], string | null>>;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(20000)
-  shippingPolicy?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(20000)
-  returnPolicy?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(20000)
-  privacyPolicy?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(20000)
-  termsAndConditions?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(20000)
-  loyaltyPolicy?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  onboardingCompleted?: boolean;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => StoreProfileSettingsDto)
-  profile?: StoreProfileSettingsDto;
 
   @IsOptional()
   @ValidateNested()

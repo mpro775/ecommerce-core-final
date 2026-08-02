@@ -13,10 +13,8 @@ export class TenantGuard implements CanActivate {
       return true;
     }
 
-    const headerStoreId = request.header('x-store-id') ?? null;
     const paramStoreId = this.extractStoreIdParam(request.params);
 
-    this.assertTenantMatch(user.storeId, headerStoreId);
     this.assertTenantMatch(user.storeId, paramStoreId);
 
     await this.assertStoreNotSuspended(user.storeId, request.path);
@@ -56,6 +54,6 @@ export class TenantGuard implements CanActivate {
   }
 
   private isRecoveryPath(path: string): boolean {
-    return path.startsWith('/billing') || path.startsWith('/support');
+    return path.startsWith('/support');
   }
 }

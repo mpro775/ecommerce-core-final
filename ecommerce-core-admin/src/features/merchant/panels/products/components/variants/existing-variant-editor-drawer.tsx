@@ -395,7 +395,7 @@ export function ExistingVariantEditorDrawer({
             <Divider />
             <Stack spacing={1.5}>
               <Typography variant="subtitle1" fontWeight={900}>
-                Ø£Ø³Ø¹Ø§Ø± ÙŠØ¯ÙˆÙŠØ© Ù„Ù„Ø¹Ù…Ù„Ø§Øª Ø§Ù„Ø£Ø®Ø±Ù‰
+                أسعار يدوية للعملات الأخرى
               </Typography>
               {currencyOverrideRows.map((row, index) => (
                 <Box key={`${row.currencyCode}-${index}`} sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '0.8fr 1fr 1fr auto' }, gap: 1.5 }}>
@@ -406,19 +406,19 @@ export function ExistingVariantEditorDrawer({
                     dir="ltr"
                   />
                   <TextField
-                    label="Ø§Ù„Ø³Ø¹Ø±"
+                    label="السعر"
                     type="number"
                     value={row.price}
                     onChange={(e) => updateCurrencyOverrideRow(index, { price: e.target.value })}
                   />
                   <TextField
-                    label="Ø§Ù„Ø³Ø¹Ø± Ù‚Ø¨Ù„ Ø§Ù„Ø®ØµÙ…"
+                    label="السعر قبل الخصم"
                     type="number"
                     value={row.compareAtPrice}
                     onChange={(e) => updateCurrencyOverrideRow(index, { compareAtPrice: e.target.value })}
                   />
                   <Button color="error" onClick={() => setCurrencyOverrideRows((prev) => prev.filter((_, rowIndex) => rowIndex !== index))}>
-                    Ø­Ø°Ù
+                    حذف
                   </Button>
                 </Box>
               ))}
@@ -427,7 +427,7 @@ export function ExistingVariantEditorDrawer({
                 onClick={() => setCurrencyOverrideRows((prev) => [...prev, { currencyCode: 'USD', price: '', compareAtPrice: '' }])}
                 sx={{ alignSelf: 'flex-start', fontWeight: 800 }}
               >
-                Ø¥Ø¶Ø§ÙØ© Ø³Ø¹Ø± Ø¨Ø¹Ù…Ù„Ø©
+                إضافة سعر بعملة
               </Button>
             </Stack>
 

@@ -34,7 +34,7 @@ interface StaffPanelProps {
   request: MerchantRequester;
 }
 
-const DEFAULT_TEAM_ROLE: TeamRole = 'manager';
+
 
 const PERMISSION_LABELS: Record<string, string> = {
   '*': 'وصول كامل',
@@ -49,14 +49,14 @@ const PERMISSION_LABELS: Record<string, string> = {
   'products:read': 'عرض المنتجات',
   'products:write': 'إدارة المنتجات',
   'inventory:read': 'عرض المخزون',
-  'inventory:write': 'إدارة المخزون',
+  'inventory:write': '[قديم] إدارة المخزون',
   'attributes:read': 'عرض الخصائص',
   'attributes:write': 'إدارة الخصائص',
   'filters:read': 'عرض الفلاتر',
   'filters:write': 'إدارة الفلاتر',
   'media:write': 'رفع الوسائط',
   'orders:read': 'عرض الطلبات',
-  'orders:write': 'إدارة الطلبات',
+  'orders:write': '[قديم] إدارة الطلبات',
   'customers:read': 'عرض العملاء',
   'customers:write': 'إدارة العملاء والدعم',
   'affiliates:read': 'عرض التسويق بالعمولة',
@@ -64,6 +64,39 @@ const PERMISSION_LABELS: Record<string, string> = {
   'loyalty:read': 'عرض الولاء',
   'loyalty:write': 'إدارة الولاء',
   'loyalty:adjust': 'تعديل نقاط الولاء',
+  'payments:write': '[قديم] إدارة المدفوعات',
+
+  'orders:create-manual': 'إنشاء طلب يدوي',
+  'orders:edit-manual': 'تعديل طلب يدوي',
+  'orders:confirm': 'تأكيد الطلبات',
+  'orders:cancel': 'إلغاء الطلبات',
+  'orders:complete': 'إكمال الطلبات',
+
+  'fulfillment:read': 'عرض عمليات الشحن',
+  'fulfillment:start-preparing': 'بدء التجهيز',
+  'fulfillment:mark-ready': 'تحديد كجاهز',
+  'fulfillment:dispatch': 'إرسال الشحنة',
+  'fulfillment:fulfill': 'تسليم الشحنة',
+  'fulfillment:fail': 'فشل الشحن',
+  'fulfillment:retry': 'إعادة المحاولة',
+  'fulfillment:cancel': 'إلغاء الشحن',
+
+  'payments:read': 'عرض المدفوعات',
+  'payments:submit-proof': 'إرفاق إيصال الدفع',
+  'payments:start-review': 'مراجعة المدفوعات',
+  'payments:approve': 'اعتماد المدفوعات',
+  'payments:reject': 'رفض المدفوعات',
+  'payments:collect-cod': 'تحصيل الدفع عند الاستلام',
+  'payments:expire': 'إنهاء المدفوعات (منتهية)',
+  'payments:cancel': 'إلغاء المدفوعات',
+
+  'inventory:reserve': 'حجز المخزون',
+  'inventory:consume-reservation': 'استهلاك الحجز',
+  'inventory:release-reservation': 'تحرير الحجز',
+  'inventory:adjust': 'تعديل المخزون',
+
+  'orders:manual-price-override': 'تجاوز السعر يدويًا',
+  'orders:override-payment-gate': 'تجاوز بوابة الدفع',
 };
 
 const PERMISSION_GROUPS = [
@@ -92,8 +125,58 @@ const PERMISSION_GROUPS = [
     ],
   },
   {
-    title: 'الطلبات والمخزون',
-    permissions: ['orders:read', 'orders:write', 'inventory:read', 'inventory:write'],
+    title: 'الطلبات',
+    permissions: [
+      'orders:read',
+      'orders:create-manual',
+      'orders:edit-manual',
+      'orders:confirm',
+      'orders:cancel',
+      'orders:complete',
+    ],
+  },
+  {
+    title: 'الشحن والتنفيذ',
+    permissions: [
+      'fulfillment:read',
+      'fulfillment:start-preparing',
+      'fulfillment:mark-ready',
+      'fulfillment:dispatch',
+      'fulfillment:fulfill',
+      'fulfillment:fail',
+      'fulfillment:retry',
+      'fulfillment:cancel',
+    ],
+  },
+  {
+    title: 'المدفوعات',
+    permissions: [
+      'payments:read',
+      'payments:submit-proof',
+      'payments:start-review',
+      'payments:approve',
+      'payments:reject',
+      'payments:collect-cod',
+      'payments:expire',
+      'payments:cancel',
+    ],
+  },
+  {
+    title: 'المخزون',
+    permissions: [
+      'inventory:read',
+      'inventory:reserve',
+      'inventory:consume-reservation',
+      'inventory:release-reservation',
+      'inventory:adjust',
+    ],
+  },
+  {
+    title: 'الصلاحيات الاستثنائية (Overrides)',
+    permissions: [
+      'orders:manual-price-override',
+      'orders:override-payment-gate',
+    ],
   },
   {
     title: 'العملاء والدعم',
@@ -123,11 +206,11 @@ export function StaffPanel({ request }: StaffPanelProps) {
   const [showInviteForm, setShowInviteForm] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteFullName, setInviteFullName] = useState('');
-  const [inviteRole, setInviteRole] = useState<TeamRole>(DEFAULT_TEAM_ROLE);
+  const [inviteRole, setInviteRole] = useState<TeamRole>('viewer');
   const [invitePermissions, setInvitePermissions] = useState<string[]>([]);
 
   const [selectedUserId, setSelectedUserId] = useState('');
-  const [editRole, setEditRole] = useState<TeamRole>(DEFAULT_TEAM_ROLE);
+  const [editRole, setEditRole] = useState<TeamRole>('viewer');
   const [editPermissions, setEditPermissions] = useState<string[]>([]);
 
   const rolePresetByCode = useMemo(
@@ -844,7 +927,7 @@ function normalizePermissions(input: string[]): string[] {
 }
 
 function coerceTeamRole(role: StoreRole): TeamRole {
-  return role === 'owner' ? DEFAULT_TEAM_ROLE : role;
+  return role === 'owner' ? 'viewer' : role;
 }
 
 function getRoleLabel(

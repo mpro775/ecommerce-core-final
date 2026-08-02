@@ -282,6 +282,7 @@ export interface AnalyticsAnomalyReportResponse {
 
 export interface AnalyticsGeneralResponse {
   windowDays: number;
+  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -320,6 +321,7 @@ export interface AnalyticsGeneralResponse {
 
 export interface AnalyticsLiveResponse {
   liveMinutes: number;
+  timezone: string;
   startAt: Date;
   endAt: Date;
   liveVisits: number;
@@ -337,6 +339,7 @@ export interface AnalyticsLiveResponse {
 
 export interface AnalyticsProductsResponse {
   windowDays: number;
+  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -351,6 +354,7 @@ export interface AnalyticsProductsResponse {
 
 export interface AnalyticsOperationsResponse {
   windowDays: number;
+  timezone: string;
   startAt: Date;
   endAt: Date;
   kpis: {
@@ -367,6 +371,7 @@ export interface AnalyticsOperationsResponse {
 
 export interface AnalyticsPaymentsAdvancedResponse {
   windowDays: number;
+  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -391,6 +396,7 @@ export interface AnalyticsPaymentsAdvancedResponse {
 
 export interface AnalyticsFinancialResponse {
   windowDays: number;
+  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -401,11 +407,12 @@ export interface AnalyticsFinancialResponse {
     shippingValue: number;
     discountValue: number;
   };
-  platformPerformance: Array<{ sourceType: 'public' | 'affiliate'; sales: number; orders: number }>;
+  sourcePerformance: Array<{ sourceType: 'public' | 'affiliate'; sales: number; orders: number }>;
 }
 
 export interface AnalyticsShipmentsResponse {
   windowDays: number;
+  timezone: string;
   currencyCode: string;
   startAt: Date;
   endAt: Date;
@@ -1612,7 +1619,7 @@ export class AnalyticsService {
       }),
     ]);
 
-    const platformBuckets = source.items.reduce((acc, item) => {
+    const sourceBuckets = source.items.reduce((acc, item) => {
       const key: 'public' | 'affiliate' =
         item.medium.toLowerCase().includes('affiliate') ||
         item.source.toLowerCase().includes('affiliate')
@@ -1639,7 +1646,7 @@ export class AnalyticsService {
         shippingValue: round2(totalShipping),
         discountValue: round2(Number(overview.gross_sales) - Number(overview.net_sales)),
       },
-      platformPerformance: Array.from(platformBuckets.values()),
+      sourcePerformance: Array.from(sourceBuckets.values()),
     };
   }
 
@@ -1796,7 +1803,8 @@ export class AnalyticsService {
     currentUser: AuthUser,
     input: AnalyticsRangeInput,
   ): Promise<{
-      currencyCode: string;
+    currencyCode: string;
+    timezone: string;
     startAt: Date;
     endAt: Date;
     windowDays: number;
@@ -1816,7 +1824,8 @@ export class AnalyticsService {
       const endAt = now;
       const startAt = new Date(endAt.getTime() - liveMinutes * 60_000);
       return {
-          currencyCode: store.currency_code ?? 'YER',
+        currencyCode: store.currency_code ?? 'YER',
+        timezone,
         startAt,
         endAt,
         windowDays: Math.max(1, Math.ceil((endAt.getTime() - startAt.getTime()) / 86_400_000)),
@@ -1833,7 +1842,8 @@ export class AnalyticsService {
       }
 
       return {
-          currencyCode: store.currency_code ?? 'YER',
+        currencyCode: store.currency_code ?? 'YER',
+        timezone,
         startAt,
         endAt,
         windowDays: Math.max(1, Math.ceil((endAt.getTime() - startAt.getTime()) / 86_400_000)),
@@ -1841,13 +1851,24 @@ export class AnalyticsService {
     }
 
     const windowDays = input.preset ?? input.window ?? 30;
-    const bounds = await this.analyticsRepository.resolveWindowBounds(windowDays);
+    const bounds = await this.analyticsRepository.resolveWindowBounds(windowDays, timezone);
     return {
       currencyCode: store.currency_code ?? 'YER',
+      timezone,
       startAt: bounds.start_at,
       endAt: bounds.end_at,
       windowDays,
     };
+  }
+
+  private resolveStoreTimezone(value: string): string {
+    const timezone = value.trim();
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
+      return timezone;
+    } catch {
+      throw new BadRequestException('Invalid analytics timezone');
+    }
   }
 
 }

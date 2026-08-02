@@ -13,7 +13,6 @@ export interface UserRecord {
   password_hash: string;
   is_active: boolean;
   store_is_suspended: boolean;
-  store_onboarding_completed_at: Date | null;
 }
 
 export interface SessionRecord {
@@ -33,8 +32,7 @@ export class AuthRepository {
     const result = await this.databaseService.db.query<UserRecord>(
       `
         SELECT id, store_id, email, full_name, role, permissions, password_hash, is_active,
-               (SELECT is_suspended FROM stores WHERE id = store_users.store_id) AS store_is_suspended,
-               (SELECT onboarding_completed_at FROM stores WHERE id = store_users.store_id) AS store_onboarding_completed_at
+               (SELECT is_suspended FROM stores WHERE id = store_users.store_id) AS store_is_suspended
         FROM store_users
         WHERE LOWER(email) = LOWER($1)
           AND deleted_at IS NULL
@@ -50,8 +48,7 @@ export class AuthRepository {
     const result = await this.databaseService.db.query<UserRecord>(
       `
         SELECT id, store_id, email, full_name, role, permissions, password_hash, is_active,
-               (SELECT is_suspended FROM stores WHERE id = store_users.store_id) AS store_is_suspended,
-               (SELECT onboarding_completed_at FROM stores WHERE id = store_users.store_id) AS store_onboarding_completed_at
+               (SELECT is_suspended FROM stores WHERE id = store_users.store_id) AS store_is_suspended
         FROM store_users
         WHERE id = $1
           AND deleted_at IS NULL

@@ -11,7 +11,8 @@ import { CustomerEngagementService } from '../customers/customer-engagement.serv
 import { CustomersService } from '../customers/customers.service';
 import { AbandonedCartsService } from '../customers/abandoned-carts.service';
 import { FiltersService, type StorefrontSmartFilter } from '../filters/filters.service';
-import { IdempotencyService } from '../idempotency/idempotency.service';
+import { CheckoutOrchestratorService } from '../checkout/checkout-orchestrator.service';
+import { CHECKOUT_ERROR_CODES, CheckoutDomainException } from '../checkout/checkout.errors';
 import { InventoryService } from '../inventory/inventory.service';
 import { OutboxService } from '../messaging/outbox.service';
 import {
@@ -23,6 +24,7 @@ import {
 import { MediaRepository } from '../media/media.repository';
 import {
   OrdersRepository,
+  type CartRecord,
   type CartItemSnapshot,
   type OrderRecord,
   type OrderStatusHistoryRecord,
@@ -43,13 +45,13 @@ import {
   type ShippingZoneRecord,
 } from '../shipping/shipping.repository';
 import { StoresRepository } from '../stores/stores.repository';
-import { StoreCapabilitiesService } from '../store-capabilities/store-capabilities.service';
 import {
   CurrencyService,
   type ResolvedCurrency,
   type VariantCurrencyOverride,
 } from '../currency/currency.service';
-import { WebhooksService } from '../webhooks/webhooks.service';
+import { DocumentSequenceService } from '../commercial/document-sequence.service';
+import { allocateDiscountStages } from '../commercial/money-allocation';
 import {
   AffiliatesService,
   type CheckoutAttributionResolution,
@@ -60,7 +62,6 @@ import {
   type PaymentMethodSnapshot,
 } from '../payment-methods/payment-methods.repository';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service';
-import { SeoService, type StorePageResponse } from '../seo/seo.service';
 import { StoreResolverService } from './store-resolver.service';
 import { StorefrontTrackingService } from './storefront-tracking.service';
 import {
@@ -151,48 +152,6 @@ export interface StorefrontFulfillmentOptionsResponse {
   deliveryZones: Array<StorefrontShippingZoneResponse & { methods: ShippingMethodQuote[] }>;
 }
 
-export interface PublicStoreResolveResponse {
-  storeId: string;
-  storeSlug: string;
-  storeSettings: {
-    name: string;
-    nameAr: string | null;
-    nameEn: string | null;
-    descriptionAr: string | null;
-    descriptionEn: string | null;
-    description: string | null;
-    logoUrl: string | null;
-    faviconUrl: string | null;
-    currencyCode: string;
-    baseCurrencyCode: 'YER';
-    defaultCurrencyCode: string;
-    currencies: Array<{
-      currencyCode: string;
-      yerPerUnit: number;
-      decimalDigits: number;
-      roundingIncrement: number;
-      isDefault: boolean;
-      isActive: boolean;
-    }>;
-    socialLinks: Record<string, string | null>;
-    phone: string | null;
-    email: string | null;
-    address: string | null;
-    workingHours: unknown;
-    policies: StorefrontPoliciesResponse;
-    language: 'ar' | 'en';
-    seoSettings: Awaited<ReturnType<SeoService['getSettings']>>;
-  };
-}
-
-export interface StorefrontPoliciesResponse {
-  shippingPolicy: string | null;
-  returnPolicy: string | null;
-  privacyPolicy: string | null;
-  termsAndConditions: string | null;
-  loyaltyPolicy: string | null;
-}
-
 export interface StorefrontCartResponse {
   cartId: string;
   currencyCode: string;
@@ -230,6 +189,11 @@ export interface CheckoutResponse {
   pointsDiscountAmount: number;
   pointsDiscountAmountYER: number;
   pointsEarned: number;
+}
+
+export interface IdempotentCheckoutHttpResult {
+  status: number;
+  body: CheckoutResponse | { code: string; message: string };
 }
 
 export interface CheckoutQuoteResponse {
@@ -313,17 +277,15 @@ export class StorefrontService {
     private readonly storeResolverService: StoreResolverService,
     private readonly categoriesRepository: CategoriesRepository,
     private readonly filtersService: FiltersService,
-    private readonly idempotencyService: IdempotencyService,
+    private readonly checkoutOrchestrator: CheckoutOrchestratorService,
     private readonly inventoryService: InventoryService,
     private readonly productsRepository: ProductsRepository,
     private readonly ordersRepository: OrdersRepository,
     private readonly shippingRepository: ShippingRepository,
     private readonly shippingCalculatorService: ShippingCalculatorService,
     private readonly promotionsService: PromotionsService,
-    private readonly storeCapabilitiesService: StoreCapabilitiesService,
     private readonly outboxService: OutboxService,
     private readonly storesRepository: StoresRepository,
-    private readonly webhooksService: WebhooksService,
     private readonly customersService: CustomersService,
     private readonly customerEngagementService: CustomerEngagementService,
     private readonly abandonedCartsService: AbandonedCartsService,
@@ -333,8 +295,8 @@ export class StorefrontService {
     private readonly paymentMethodsService: PaymentMethodsService,
     private readonly paymentMethodsRepository: PaymentMethodsRepository,
     private readonly mediaRepository: MediaRepository,
-    private readonly seoService: SeoService,
     private readonly currencyService: CurrencyService,
+    private readonly documentSequenceService: DocumentSequenceService,
   ) {}
 
   async getStore(request: Request) {
@@ -348,57 +310,7 @@ export class StorefrontService {
       id: store.id,
       name: store.name,
       slug: store.slug,
-      logoUrl: store.logo_url,
-      faviconUrl: store.favicon_url,
       currencyCode: store.currency_code,
-    };
-  }
-
-  async resolvePublicStore(request: Request): Promise<PublicStoreResolveResponse> {
-    const store = await this.storeResolverService.resolve(request);
-    const [storeSettings, seoSettings] = await Promise.all([
-      this.storesRepository.findById(store.id),
-      this.seoService.getSettings({ storeId: store.id }),
-    ]);
-    const currencies = await this.currencyService.listStoreCurrencies(store.id);
-    const defaultCurrency = currencies.find((currency) => currency.isDefault);
-    const selectedCurrency = await this.currencyService.resolveStoreCurrency(
-      store.id,
-      this.readCurrencyCode(request),
-    );
-
-    return {
-      storeId: store.id,
-      storeSlug: store.slug,
-      storeSettings: {
-        name: storeSettings?.name ?? store.name,
-        nameAr: storeSettings?.name_ar ?? storeSettings?.name ?? store.name,
-        nameEn: storeSettings?.name_en ?? null,
-        descriptionAr: storeSettings?.description_ar ?? null,
-        descriptionEn: storeSettings?.description_en ?? null,
-        description: storeSettings?.description_ar ?? storeSettings?.description_en ?? null,
-        logoUrl: storeSettings?.logo_url ?? store.logo_url,
-        faviconUrl: storeSettings?.favicon_url ?? store.favicon_url,
-        currencyCode: selectedCurrency.currencyCode,
-        baseCurrencyCode: 'YER',
-        defaultCurrencyCode:
-          defaultCurrency?.currencyCode ?? storeSettings?.default_currency_code ?? 'YER',
-        currencies,
-        socialLinks: this.normalizeSocialLinks(storeSettings?.social_links),
-        phone: storeSettings?.phone ?? null,
-        email: null,
-        address: this.formatStoreAddress(storeSettings),
-        workingHours: storeSettings?.working_hours ?? null,
-        policies: {
-          shippingPolicy: storeSettings?.shipping_policy ?? null,
-          returnPolicy: storeSettings?.return_policy ?? null,
-          privacyPolicy: storeSettings?.privacy_policy ?? null,
-          termsAndConditions: storeSettings?.terms_of_service ?? null,
-          loyaltyPolicy: storeSettings?.loyalty_policy ?? null,
-        },
-        language: this.containsArabic(storeSettings?.name ?? store.name) ? 'ar' : 'en',
-        seoSettings,
-      },
     };
   }
 
@@ -599,22 +511,6 @@ export class StorefrontService {
     };
   }
 
-  async getPolicies(request: Request): Promise<StorefrontPoliciesResponse> {
-    const store = await this.storeResolverService.resolve(request);
-    const storeSettings = await this.storesRepository.findById(store.id);
-    if (!storeSettings) {
-      throw new NotFoundException('Store not found');
-    }
-
-    return {
-      shippingPolicy: storeSettings.shipping_policy,
-      returnPolicy: storeSettings.return_policy,
-      privacyPolicy: storeSettings.privacy_policy,
-      termsAndConditions: storeSettings.terms_of_service,
-      loyaltyPolicy: storeSettings.loyalty_policy,
-    };
-  }
-
   async trackCustomEvent(
     request: Request,
     input: TrackStorefrontEventDto,
@@ -698,24 +594,6 @@ export class StorefrontService {
     });
 
     return mappedCart;
-  }
-
-  async listPages(request: Request): Promise<{ items: StorePageResponse[] }> {
-    const store = await this.storeResolverService.resolve(request);
-    const pages = await this.seoService.listPages({ storeId: store.id });
-    return {
-      items: pages.items.filter((page) => page.status === 'published'),
-    };
-  }
-
-  async getPageBySlug(request: Request, slug: string): Promise<StorePageResponse> {
-    const store = await this.storeResolverService.resolve(request);
-    const pages = await this.seoService.listPages({ storeId: store.id });
-    const page = pages.items.find((item) => item.slug === slug && item.status === 'published');
-    if (!page) {
-      throw new NotFoundException('Page not found');
-    }
-    return page;
   }
 
   async getCart(
@@ -852,8 +730,15 @@ export class StorefrontService {
     request: Request,
     input: CheckoutDto,
     idempotencyKey?: string,
-  ): Promise<CheckoutResponse> {
+  ): Promise<IdempotentCheckoutHttpResult> {
     const store = await this.storeResolverService.resolve(request);
+    if (!idempotencyKey) {
+      throw new CheckoutDomainException(
+        CHECKOUT_ERROR_CODES.IDEMPOTENCY_KEY_REQUIRED,
+        'Idempotency-Key header is required',
+        400,
+      );
+    }
 
     await this.storefrontTrackingService.trackEvent(request, {
       storeId: store.id,
@@ -864,104 +749,79 @@ export class StorefrontService {
         hasCoupon: Boolean(input.couponCode?.trim()),
         hasRestockToken: Boolean(input.restockToken?.trim()),
       },
-    });
+    }).catch(() => undefined);
 
-    if (idempotencyKey) {
-      const cachedResult = await this.idempotencyService.checkOrPrepare({
-        storeId: store.id,
-        key: idempotencyKey,
-        requestBody: input,
-      });
-
-      if (cachedResult.isCached && cachedResult.record) {
-        return cachedResult.record.response as unknown as CheckoutResponse;
-      }
-    }
-
-    await this.storeCapabilitiesService.assertMetricCanGrow(store.id, 'orders.monthly', 1);
-
-    const checkoutData = await this.prepareCheckoutData(store.id, input, request);
-    const orderId = uuidv4();
-    const orderCode = this.generateOrderCode();
-
-    const order = await this.executeCheckoutTransaction(
-      store.id,
-      input,
-      checkoutData,
-      orderId,
-      orderCode,
-    );
-
-    await this.abandonedCartsService.attachRecoveredCheckout({
+    const result = await this.checkoutOrchestrator.execute({
       storeId: store.id,
-      cartId: input.cartId,
-      orderId: order.id,
-    });
+      actorId: await this.resolveCustomerIdFromAccessToken(store.id, input.customerAccessToken),
+      idempotencyKey,
+      payload: input,
+      work: async ({ db, idempotencyRecordId }) => {
+        const cart = await this.ordersRepository.lockCartForCheckout(db, store.id, input.cartId);
+        if (!cart) {
+          throw new CheckoutDomainException(
+            CHECKOUT_ERROR_CODES.CART_NOT_FOUND,
+            'Cart was not found',
+            404,
+          );
+        }
+        if (cart.checked_out_order_id || cart.status === 'checked_out') {
+          throw new CheckoutDomainException(
+            CHECKOUT_ERROR_CODES.CART_ALREADY_CHECKED_OUT,
+            'Cart has already been checked out',
+          );
+        }
+        if (!['open', 'abandoned'].includes(cart.status)) {
+          throw new CheckoutDomainException(CHECKOUT_ERROR_CODES.CART_NOT_OPEN, 'Cart is not open');
+        }
+        if (cart.expires_at <= new Date()) {
+          throw new CheckoutDomainException(CHECKOUT_ERROR_CODES.CART_EXPIRED, 'Cart has expired');
+        }
 
-    const restockToken = input.restockToken?.trim();
-    if (restockToken && order.customer_id) {
-      await this.customerEngagementService.attachRestockConversion({
-        token: restockToken,
-        storeId: store.id,
-        customerId: order.customer_id,
-        orderId: order.id,
-        amount: Number(order.total),
-      });
+        const checkoutData = await this.prepareCheckoutData(store.id, input, request, {
+          db,
+          lockedCart: cart,
+        });
+        const order = await this.persistCheckoutTransaction(
+          db,
+          store.id,
+          input,
+          checkoutData,
+          uuidv4(),
+          await this.documentSequenceService.allocate(db, {
+            storeId: store.id,
+            documentType: 'ORD',
+          }),
+          idempotencyRecordId,
+        );
+        await this.attachCheckoutConversionsInTransaction(db, store.id, input, order);
+        await this.publishOrderCreated(db, order, store.id, request);
+        const response = this.mapCheckoutResponse(order);
+        return {
+          status: 200,
+          body: response as unknown as Record<string, unknown>,
+          orderId: order.id,
+        };
+      },
+    });
+    if (result.status >= 400) {
+      return { status: result.status, body: result.body as { code: string; message: string } };
     }
+    const response = result.body as unknown as CheckoutResponse;
 
-    await this.publishOrderCreated(order, store.id);
-    await this.webhooksService.dispatchEvent(store.id, 'order.created', {
-      orderId: order.id,
-      orderCode: order.order_code,
-      status: order.status,
-      total: Number(order.total),
-      currencyCode: order.currency_code,
-    });
-    await this.storeCapabilitiesService.recordUsageEvent(store.id, 'orders.monthly', 1, {
-      orderId: order.id,
-      orderCode: order.order_code,
-    });
-
-    const response = this.mapCheckoutResponse(order);
-
-    await this.storefrontTrackingService.trackEvent(request, {
+    if (!result.replayed) await this.storefrontTrackingService.trackEvent(request, {
       storeId: store.id,
       eventType: 'checkout_complete',
       cartId: input.cartId,
-      orderId: order.id,
+      orderId: response.orderId,
       metadata: {
         paymentMethod: input.paymentMethod,
         total: response.total,
         currencyCode: response.currencyCode,
       },
-    });
+    }).catch(() => undefined);
 
-    if (checkoutData.promotion.couponCode) {
-      await this.storefrontTrackingService.trackEvent(request, {
-        storeId: store.id,
-        eventType: 'coupon_apply',
-        cartId: input.cartId,
-        orderId: order.id,
-        metadata: {
-          couponCode: checkoutData.promotion.couponCode,
-          discountTotal: checkoutData.promotion.totalDiscount,
-          total: response.total,
-          currencyCode: response.currencyCode,
-        },
-      });
-    }
-
-    if (idempotencyKey) {
-      await this.idempotencyService.storeResponse(
-        store.id,
-        idempotencyKey,
-        input,
-        response as unknown as Record<string, unknown>,
-        order.id,
-      );
-    }
-
-    return response;
+    return { status: result.status, body: response };
   }
 
   async trackOrder(request: Request, orderCode: string, phone?: string) {
@@ -1645,11 +1505,18 @@ export class StorefrontService {
     cartId: string,
     currency: ResolvedCurrency,
     items: CartItemSnapshot[],
+    db?: QueryRunner,
   ): Promise<StorefrontCartResponse> {
-    const variantOverrides = await this.currencyService.listVariantOverrides(
-      this.readStoreIdFromCartItems(items),
-      items.map((item) => item.variant_id),
-    );
+    const variantOverrides = db
+      ? await this.currencyService.listVariantOverridesInTransaction(
+          db,
+          this.readStoreIdFromCartItems(items),
+          items.map((item) => item.variant_id),
+        )
+      : await this.currencyService.listVariantOverrides(
+          this.readStoreIdFromCartItems(items),
+          items.map((item) => item.variant_id),
+        );
     const mappedItems = items.map((item) =>
       this.mapCartItem(item, currency, variantOverrides.get(item.variant_id) ?? []),
     );
@@ -1691,20 +1558,27 @@ export class StorefrontService {
     return items[0]?.store_id ?? '';
   }
 
-  private async validateCartStock(storeId: string, items: CartItemSnapshot[]): Promise<void> {
+  private async validateCartStock(
+    storeId: string,
+    items: CartItemSnapshot[],
+    db?: QueryRunner,
+  ): Promise<void> {
     for (const item of items) {
       if (item.product_type === 'bundled') {
-        await this.ensureBundleComponentsStock(storeId, item.product_id, item.quantity);
+        await this.ensureBundleComponentsStock(storeId, item.product_id, item.quantity, db);
         continue;
       }
 
       if (!item.stock_unlimited) {
-        const availableStock = await this.inventoryService.getAvailableStock(
-          storeId,
-          item.variant_id,
-        );
+        const availableStock = db
+          ? await this.inventoryService.getAvailableStockInTransaction(db, storeId, item.variant_id)
+          : await this.inventoryService.getAvailableStock(storeId, item.variant_id);
         if (availableStock === null || item.quantity > availableStock) {
-          throw new UnprocessableEntityException(`Variant ${item.sku} is out of stock`);
+          throw new CheckoutDomainException(
+            CHECKOUT_ERROR_CODES.INSUFFICIENT_STOCK,
+            `Variant ${item.sku} is out of stock`,
+            422,
+          );
         }
       }
     }
@@ -1714,15 +1588,19 @@ export class StorefrontService {
     storeId: string,
     bundleProductId: string,
     bundleQuantity: number,
+    db?: QueryRunner,
   ): Promise<void> {
     const reservationRows = await this.resolveBundleReservationRows(
       storeId,
       bundleProductId,
       bundleQuantity,
+      db,
     );
 
     for (const row of reservationRows) {
-      const availableStock = await this.inventoryService.getAvailableStock(storeId, row.variantId);
+      const availableStock = db
+        ? await this.inventoryService.getAvailableStockInTransaction(db, storeId, row.variantId)
+        : await this.inventoryService.getAvailableStock(storeId, row.variantId);
       if (availableStock === null || row.quantity > availableStock) {
         throw new UnprocessableEntityException(`Bundle component SKU ${row.sku} is out of stock`);
       }
@@ -1733,8 +1611,9 @@ export class StorefrontService {
     storeId: string,
     bundleProductId: string,
     bundleQuantity: number,
+    db?: QueryRunner,
   ): Promise<Array<{ variantId: string; quantity: number; sku: string }>> {
-    const bundleItems = await this.productsRepository.listBundleItems(storeId, bundleProductId);
+    const bundleItems = await this.productsRepository.listBundleItems(storeId, bundleProductId, db);
     if (bundleItems.length === 0) {
       throw new UnprocessableEntityException('Bundled product has no configured bundled items');
     }
@@ -1744,6 +1623,7 @@ export class StorefrontService {
       const bundledProduct = await this.productsRepository.findById(
         storeId,
         item.bundled_product_id,
+        db,
       );
       if (!bundledProduct) {
         throw new UnprocessableEntityException('One bundled product is unavailable');
@@ -1754,10 +1634,11 @@ export class StorefrontService {
       }
 
       const variant = item.bundled_variant_id
-        ? await this.productsRepository.findVariantById(storeId, item.bundled_variant_id)
+        ? await this.productsRepository.findVariantById(storeId, item.bundled_variant_id, db)
         : await this.productsRepository.findDefaultVariantByProductId(
             storeId,
             item.bundled_product_id,
+            db,
           );
 
       if (!variant) {
@@ -1794,35 +1675,65 @@ export class StorefrontService {
       | 'currencyCode'
     >,
     request: Request,
-    options: { requirePaymentMethod?: boolean } = {},
+    options: {
+      requirePaymentMethod?: boolean;
+      db?: QueryRunner;
+      lockedCart?: CartRecord;
+    } = {},
   ): Promise<CheckoutData> {
     const requirePaymentMethod = options.requirePaymentMethod ?? true;
-    const cart = await this.ordersRepository.findOpenCartById(storeId, input.cartId);
+    const db = options.db;
+    const cart = options.lockedCart ?? await this.ordersRepository.findOpenCartById(storeId, input.cartId);
     if (!cart) {
-      throw new BadRequestException('«·”·… €Ì— „ÊÃÊœ… √Ê  „  ÕÊÌ·Â« ≈·Ï ÿ·» ”«»ﬁ«.');
+      throw new BadRequestException('ÿßŸÑÿ≥ŸÑÿ© ÿ∫Ÿäÿ± ŸÖŸàÿ¨ŸàÿØÿ© ÿ£Ÿà ÿ™ŸÖ ÿ™ÿ≠ŸàŸäŸÑŸáÿß ÿ•ŸÑŸâ ÿ∑ŸÑÿ® ÿ≥ÿßÿ®ŸÇÿßŸã.');
     }
-    const currency = await this.currencyService.resolveStoreCurrency(
-      storeId,
-      input.currencyCode ?? cart.currency_code,
-    );
-    await this.ordersRepository.updateCartCurrency({
-      storeId,
-      cartId: cart.id,
-      currencyCode: currency.currencyCode,
-      exchangeRateYerPerUnit: currency.yerPerUnit,
-    });
+    const currency = db
+      ? await this.currencyService.resolveStoreCurrencyInTransaction(
+          db,
+          storeId,
+          input.currencyCode ?? cart.currency_code,
+        )
+      : await this.currencyService.resolveStoreCurrency(
+          storeId,
+          input.currencyCode ?? cart.currency_code,
+        );
+    if (db) {
+      await this.ordersRepository.updateCartCurrencyInTransaction(db, {
+        storeId, cartId: cart.id, currencyCode: currency.currencyCode,
+        exchangeRateYerPerUnit: currency.yerPerUnit,
+      });
+    } else {
+      await this.ordersRepository.updateCartCurrency({
+        storeId, cartId: cart.id, currencyCode: currency.currencyCode,
+        exchangeRateYerPerUnit: currency.yerPerUnit,
+      });
+    }
     cart.currency_code = currency.currencyCode;
     cart.exchange_rate_yer_per_unit = String(currency.yerPerUnit);
 
-    const items = await this.ordersRepository.listCartItems(storeId, cart.id);
+    const items = db
+      ? await this.ordersRepository.listCartItemsInTransaction(db, storeId, cart.id)
+      : await this.ordersRepository.listCartItems(storeId, cart.id);
     if (items.length === 0) {
-      throw new BadRequestException('Cart is empty');
+      throw new CheckoutDomainException(CHECKOUT_ERROR_CODES.CART_EMPTY, 'Cart is empty', 400);
     }
-
-    await this.inventoryService.releaseExpiredReservations(storeId);
-    await this.validateCartStock(storeId, items);
-    const inventoryReservationItems = await this.mapCheckoutItemsToInventoryInput(storeId, items);
-    const mappedCart = await this.mapCart(cart.id, currency, items);
+    for (const item of items) {
+      if (item.product_status !== 'active' || !item.product_is_visible) {
+        throw new CheckoutDomainException(
+          CHECKOUT_ERROR_CODES.PRODUCT_NOT_PURCHASABLE,
+          `Product for SKU ${item.sku} is not purchasable`,
+        );
+      }
+    }
+    if (db) await this.inventoryService.releaseExpiredReservationsInTransaction(db, storeId);
+    else await this.inventoryService.releaseExpiredReservations(storeId);
+    await this.validateCartStock(storeId, items, db);
+    const inventoryReservationItems = await this.mapCheckoutItemsToInventoryInput(
+      storeId,
+      items,
+      db,
+    );
+    const mappedCart = await this.mapCart(cart.id, currency, items, db);
     const subtotal = mappedCart.subtotal;
     const subtotalYER = mappedCart.subtotalYER;
     const itemsYER = items.map((item) => ({
@@ -1833,10 +1744,11 @@ export class StorefrontService {
       storeId,
       input.fulfillmentZoneId ?? input.shippingZoneId,
       input.fulfillmentMethodId ?? input.shippingMethodId,
+      db,
     );
     if (fulfillment.availableMethods.length === 0) {
       throw new BadRequestException(
-        '·«  ÊÃœ ÿ—ﬁ  Ê’Ì· √Ê «” ·«„ „ «Õ… Õ«·Ì« ·Â–« «·„ Ã—. Ì—ÃÏ «· Ê«’· „⁄ «·„ Ã—.',
+        'ŸÑÿß ÿ™Ÿàÿ¨ÿØ ÿ∑ÿ±ŸÇ ÿ™ŸàÿµŸäŸÑ ÿ£Ÿà ÿßÿ≥ÿ™ŸÑÿßŸÖ ŸÖÿ™ÿßÿ≠ÿ© ÿ≠ÿßŸÑŸäÿßŸã ŸÑŸáÿ∞ÿß ÿßŸÑŸÖÿ™ÿ¨ÿ±. Ÿäÿ±ÿ¨Ÿâ ÿßŸÑÿ™ŸàÿßÿµŸÑ ŸÖÿπ ÿßŸÑŸÖÿ™ÿ¨ÿ±.',
       );
     }
     const shippingZone = fulfillment.zone;
@@ -1849,31 +1761,11 @@ export class StorefrontService {
     if (requestedPointsToRedeem > 0 && !customerIdForLoyalty) {
       throw new BadRequestException('Customer login is required to redeem loyalty points');
     }
-    if (requestedPointsToRedeem > 0 && input.couponCode?.trim()) {
-      throw new BadRequestException('Cannot combine loyalty points with coupon codes');
-    }
-
-    let promotionYER: PromotionComputationResult;
-    if (requestedPointsToRedeem > 0) {
-      promotionYER = {
-        couponId: null,
-        couponCode: null,
-        couponIsFreeShipping: false,
-        couponDiscount: 0,
-        offerId: null,
-        offerDiscount: 0,
-        totalDiscount: 0,
-      };
-    } else {
-      promotionYER = await this.promotionsService.computeCheckoutDiscount(
-        storeId,
-        this.buildPromotionInput(subtotalYER, itemsYER, input.couponCode),
-      );
-    }
-
-    if (requestedPointsToRedeem > 0 && promotionYER.totalDiscount > 0) {
-      throw new BadRequestException('Cannot combine loyalty points with offers or coupons');
-    }
+    const promotionYER = await this.promotionsService.computeCheckoutDiscount(
+      storeId,
+      this.buildPromotionInput(subtotalYER, itemsYER, input.couponCode),
+      db,
+    );
 
     const shippingResolutionYER = this.shippingCalculatorService.resolveMethod({
       zone: shippingZone,
@@ -1892,7 +1784,7 @@ export class StorefrontService {
       (input.fulfillmentMethodId ?? input.shippingMethodId) &&
       !shippingResolutionYER.selectedMethod
     ) {
-      throw new BadRequestException('ÿ—Ìﬁ… «· Ê’Ì· «·„Õœœ… ·„  ⁄œ „ «Õ…. Ì—ÃÏ «Œ Ì«— ÿ—Ìﬁ… √Œ—Ï.');
+      throw new BadRequestException('ÿ∑ÿ±ŸäŸÇÿ© ÿßŸÑÿ™ŸàÿµŸäŸÑ ÿßŸÑŸÖÿ≠ÿØÿØÿ© ŸÑŸÖ ÿ™ÿπÿØ ŸÖÿ™ÿßÿ≠ÿ©. Ÿäÿ±ÿ¨Ÿâ ÿßÿÆÿ™Ÿäÿßÿ± ÿ∑ÿ±ŸäŸÇÿ© ÿ£ÿÆÿ±Ÿâ.');
     }
 
     const shippingResolution = this.convertShippingResolution(shippingResolutionYER, currency);
@@ -1906,6 +1798,16 @@ export class StorefrontService {
     let pointsRedeemed = 0;
     let pointsDiscountAmountYER = 0;
     if (requestedPointsToRedeem > 0 && customerIdForLoyalty) {
+      if (db) {
+        const lockedDecision = await this.loyaltyService.previewRedemptionInTransaction(db, {
+          storeId,
+          customerId: customerIdForLoyalty,
+          requestedPoints: requestedPointsToRedeem,
+          totalBeforeDiscount: baseTotalYER,
+        });
+        pointsRedeemed = lockedDecision.pointsRedeemed;
+        pointsDiscountAmountYER = lockedDecision.discountAmount;
+      } else {
       const settings = await this.loyaltyService.getSettingsByStoreId(storeId);
       if (!settings.isEnabled) {
         throw new BadRequestException('Loyalty program is disabled');
@@ -1931,18 +1833,22 @@ export class StorefrontService {
       });
       pointsRedeemed = estimate.pointsRedeemed;
       pointsDiscountAmountYER = estimate.discountAmount;
+      }
     }
     const pointsDiscountAmount = this.currencyService.convertFromYer(
       pointsDiscountAmountYER,
       currency,
     );
 
-    const loyaltyRuleList = await this.loyaltyService.getRulesByStoreId(storeId);
+    const loyaltyRuleList = db
+      ? await this.loyaltyService.getRulesByStoreIdInTransaction(db, storeId)
+      : await this.loyaltyService.getRulesByStoreId(storeId);
     const potentialEarnPoints = this.computePotentialEarnPoints(subtotalYER, loyaltyRuleList);
     const affiliateAttribution = await this.affiliatesService.resolveCheckoutAttribution({
       storeId,
       sessionId: this.storefrontTrackingService.resolveSessionIdForRequest(request),
       couponCode: promotionYER.couponCode,
+      db,
     });
     const totalYER = this.calculateTotal(
       subtotalYER + shippingFeeYER,
@@ -1952,30 +1858,35 @@ export class StorefrontService {
     const total = this.currencyService.convertFromYer(totalYER, currency);
     let paymentSnapshot: PaymentMethodSnapshot | null = null;
     if (requirePaymentMethod) {
-      const enabledPaymentMethods = await this.paymentMethodsService.listStorefront(storeId);
+      const enabledPaymentMethods = await this.paymentMethodsService.listStorefront(storeId, db);
       if (enabledPaymentMethods.length === 0) {
-        throw new BadRequestException('·«  ÊÃœ ÿ—ﬁ œ›⁄ „›⁄·… ·Â–« «·„ Ã— Õ«·Ì«.');
+        throw new BadRequestException('ŸÑÿß ÿ™Ÿàÿ¨ÿØ ÿ∑ÿ±ŸÇ ÿØŸÅÿπ ŸÖŸÅÿπŸÑÿ© ŸÑŸáÿ∞ÿß ÿßŸÑŸÖÿ™ÿ¨ÿ± ÿ≠ÿßŸÑŸäÿßŸã.');
       }
       paymentSnapshot = await this.paymentMethodsService.resolveCheckoutMethod(
         storeId,
         (input as CheckoutDto).storePaymentMethodId,
         (input as CheckoutDto).paymentMethod,
+        db,
       );
     }
     const payerReference = (input as CheckoutDto).payerReference?.trim() ?? '';
     if (paymentSnapshot?.requiresReference && !payerReference) {
-      throw new BadRequestException('—ﬁ„ „—Ã⁄ «·⁄„·Ì… „ÿ·Ê» ·ÿ—Ìﬁ… «·œ›⁄ «·„Œ «—….');
+      throw new BadRequestException('ÿ±ŸÇŸÖ ŸÖÿ±ÿ¨ÿπ ÿßŸÑÿπŸÖŸÑŸäÿ© ŸÖÿ∑ŸÑŸàÿ® ŸÑÿ∑ÿ±ŸäŸÇÿ© ÿßŸÑÿØŸÅÿπ ÿßŸÑŸÖÿÆÿ™ÿßÿ±ÿ©.');
     }
     let payerReceiptUrl: string | null = null;
     if ((input as CheckoutDto).payerReceiptMediaAssetId) {
       const receipt = await this.mediaRepository.findById(
         storeId,
         (input as CheckoutDto).payerReceiptMediaAssetId!,
+        db,
       );
       if (!receipt || !receipt.mime_type.startsWith('image/')) {
-        throw new BadRequestException('’Ê—… «·≈Ì’«· €Ì— ’ÕÌÕ… √Ê €Ì— „ÊÃÊœ….');
+        throw new BadRequestException('ÿµŸàÿ±ÿ© ÿßŸÑÿ•ŸäÿµÿßŸÑ ÿ∫Ÿäÿ± ÿµÿ≠Ÿäÿ≠ÿ© ÿ£Ÿà ÿ∫Ÿäÿ± ŸÖŸàÿ¨ŸàÿØÿ©.');
       }
       payerReceiptUrl = receipt.public_url;
+    }
+    if (paymentSnapshot?.requiresReceipt && !paymentSnapshot.isReceiptOptional && !payerReceiptUrl) {
+      throw new BadRequestException('A payment receipt is required for the selected payment method');
     }
 
     return {
@@ -2025,13 +1936,14 @@ export class StorefrontService {
     checkoutData: CheckoutData,
     orderId: string,
     orderCode: string,
+    idempotencyRecordId: string | null = null,
   ): Promise<OrderRecord> {
     const customerId = await this.findOrCreateCheckoutCustomer(db, storeId, input);
     if (checkoutData.pointsToRedeem > 0 && checkoutData.customerIdForLoyalty !== customerId) {
       throw new BadRequestException('Loyalty redemption requires authenticated customer');
     }
     if (!checkoutData.shippingMethod || !checkoutData.shippingZone) {
-      throw new BadRequestException('Ì—ÃÏ «Œ Ì«— ÿ—Ìﬁ… «” ·«„ «·ÿ·» ﬁ»· ≈ﬂ„«· «·ÿ·».');
+      throw new BadRequestException('Ÿäÿ±ÿ¨Ÿâ ÿßÿÆÿ™Ÿäÿßÿ± ÿ∑ÿ±ŸäŸÇÿ© ÿßÿ≥ÿ™ŸÑÿßŸÖ ÿßŸÑÿ∑ŸÑÿ® ŸÇÿ®ŸÑ ÿ•ŸÉŸÖÿßŸÑ ÿßŸÑÿ∑ŸÑÿ®.');
     }
     const requiresAddress = checkoutData.shippingMethod?.type !== 'store_pickup';
     await this.saveCheckoutAddress(db, storeId, customerId, input, requiresAddress);
@@ -2076,10 +1988,23 @@ export class StorefrontService {
       pointsDiscountAmountYER: checkoutData.pointsDiscountAmountYER,
       note: input.note?.trim() ?? null,
       shippingAddress: this.buildShippingAddress(input, requiresAddress),
+      cartId: checkoutData.cart.id,
     });
-
-    await this.completeCheckoutArtifacts(db, storeId, orderId, customerId, input, checkoutData);
-    return order;
+    this.maybeInjectCheckoutFailure('after_order_insert');
+    await this.completeCheckoutArtifacts(
+      db, storeId, orderId, customerId, input, checkoutData, idempotencyRecordId,
+    );
+    const refreshed = await db.query<OrderRecord>(
+      `SELECT id, store_id, customer_id, order_code, status, subtotal, total,
+              shipping_zone_id, shipping_method_id, shipping_method_snapshot, shipping_fee,
+              discount_total, points_redeemed, points_discount_amount, points_earned,
+              coupon_code, currency_code, exchange_rate_yer_per_unit, subtotal_yer, total_yer,
+              shipping_fee_yer, discount_total_yer, points_discount_amount_yer, note,
+              shipping_address, cart_id, created_at, updated_at
+       FROM orders WHERE store_id = $1 AND id = $2`,
+      [storeId, order.id],
+    );
+    return refreshed.rows[0] ?? order;
   }
 
   private async findOrCreateCheckoutCustomer(
@@ -2128,7 +2053,7 @@ export class StorefrontService {
         input.customerAddressId,
       );
       if (!selectedAddress) {
-        throw new BadRequestException('«·⁄‰Ê«‰ «·„Õœœ €Ì— „ÊÃÊœ ·Â–« «·⁄„Ì·.');
+        throw new BadRequestException('ÿßŸÑÿπŸÜŸàÿßŸÜ ÿßŸÑŸÖÿ≠ÿØÿØ ÿ∫Ÿäÿ± ŸÖŸàÿ¨ŸàÿØ ŸÑŸáÿ∞ÿß ÿßŸÑÿπŸÖŸäŸÑ.');
       }
       return;
     }
@@ -2170,8 +2095,19 @@ export class StorefrontService {
     customerId: string,
     input: CheckoutDto,
     checkoutData: CheckoutData,
+    idempotencyRecordId: string | null,
   ): Promise<void> {
-    await this.persistOrderItems(db, storeId, orderId, checkoutData.items, checkoutData.currency);
+    await this.persistOrderItems(
+      db,
+      storeId,
+      orderId,
+      checkoutData.items,
+      checkoutData.currency,
+      checkoutData.promotion,
+      checkoutData.promotionYER,
+      checkoutData.pointsDiscountAmount,
+      checkoutData.pointsDiscountAmountYER,
+    );
     if (checkoutData.inventoryReservationItems.length > 0) {
       await this.inventoryService.reserveOrderItems(db, {
         storeId,
@@ -2181,25 +2117,41 @@ export class StorefrontService {
         metadata: {
           source: 'storefront.checkout',
         },
+        actorId: customerId,
+        actorType: 'customer',
       });
     }
-    await this.createPayment(db, storeId, orderId, input, checkoutData);
+    const paymentId = await this.createPayment(db, storeId, orderId, input, checkoutData);
+    this.maybeInjectCheckoutFailure('after_payment_insert');
     if (checkoutData.promotion.couponId) {
-      await this.promotionsService.increaseCouponUsageInTransaction(
-        db,
+      await this.promotionsService.consumeCouponInTransaction(db, {
         storeId,
-        checkoutData.promotion.couponId,
-      );
+        couponId: checkoutData.promotion.couponId,
+        orderId,
+        customerId,
+        discountAmount: checkoutData.promotion.couponDiscount,
+        currencyCode: checkoutData.currency.currencyCode,
+        subtotal: checkoutData.subtotal,
+        productIds: checkoutData.items.map((item) => item.product_id),
+        categoryIds: checkoutData.items.flatMap((item) => item.category_id ? [item.category_id] : []),
+      });
     }
     if (checkoutData.pointsToRedeem > 0) {
-      await this.loyaltyService.applyRedemptionToOrderInTransaction(db, {
+      const actual = await this.loyaltyService.applyRedemptionToOrderInTransaction(db, {
         storeId,
         customerId,
         orderId,
         pointsToRedeem: checkoutData.pointsToRedeem,
         totalBeforeDiscount: checkoutData.subtotalYER + (checkoutData.shippingMethodYER?.cost ?? 0),
+        displayDiscountAmount: checkoutData.pointsDiscountAmount,
         createdByStoreUserId: null,
       });
+      if (
+        actual.pointsRedeemed !== checkoutData.pointsRedeemed ||
+        actual.discountAmount !== checkoutData.pointsDiscountAmountYER
+      ) {
+        throw new Error('Locked loyalty calculation diverged from the committed checkout total');
+      }
     }
     await this.affiliatesService.createPendingCommissionInTransaction(db, {
       storeId,
@@ -2211,19 +2163,72 @@ export class StorefrontService {
     await this.ordersRepository.insertOrderStatusHistory(db, {
       storeId,
       orderId,
-      oldStatus: null,
-      newStatus: 'new',
-      changedBy: null,
-      note: 'Order created via storefront checkout',
+      fromStatus: null,
+      toStatus: 'new',
+      actorId: null,
+      actorType: 'customer',
+      command: 'checkout',
+      reason: 'Order created via storefront checkout',
+      idempotencyRecordId,
+      businessKey: `order:${orderId}:created`,
     });
-    await this.ordersRepository.markCartCheckedOut(db, checkoutData.cart.id);
+    const cartUpdated = await this.ordersRepository.markCartCheckedOut(
+      db,
+      storeId,
+      checkoutData.cart.id,
+      orderId,
+    );
+    if (!cartUpdated) {
+      throw new CheckoutDomainException(
+        CHECKOUT_ERROR_CODES.CART_ALREADY_CHECKED_OUT,
+        'Cart was checked out concurrently',
+      );
+    }
+
+    const reservations = await db.query<{ id: string; variant_id: string; quantity: number }>(
+      `SELECT id, variant_id, quantity FROM inventory_reservations
+       WHERE store_id = $1 AND order_id = $2 AND status = 'active'`,
+      [storeId, orderId],
+    );
+    for (const reservation of reservations.rows) {
+      await this.outboxService.enqueueInTransaction(db, {
+        aggregateType: 'inventory-reservation',
+        aggregateId: reservation.id,
+        eventType: 'inventory.reserved',
+        deduplicationKey: `inventory.reserved:${reservation.id}`,
+        payload: { storeId, orderId, variantId: reservation.variant_id, quantity: reservation.quantity },
+      });
+    }
+    await this.outboxService.enqueueInTransaction(db, {
+      aggregateType: 'payment',
+      aggregateId: paymentId,
+      eventType: 'payment.created',
+      deduplicationKey: `payment.created:${paymentId}`,
+      payload: { storeId, orderId, paymentId, amount: checkoutData.total, currencyCode: checkoutData.currency.currencyCode },
+    });
+    if (checkoutData.affiliateAttribution) {
+      await this.outboxService.enqueueInTransaction(db, {
+        aggregateType: 'order',
+        aggregateId: orderId,
+        eventType: 'affiliate.commission_created',
+        deduplicationKey: `affiliate.commission_created:${orderId}`,
+        payload: { storeId, orderId },
+      });
+    }
   }
 
-  private async publishOrderCreated(order: OrderRecord, storeId: string): Promise<void> {
-    await this.outboxService.enqueue({
+  private async publishOrderCreated(
+    db: QueryRunner,
+    order: OrderRecord,
+    storeId: string,
+    request: Request,
+  ): Promise<void> {
+    this.maybeInjectCheckoutFailure('outbox_insert');
+    await this.outboxService.enqueueInTransaction(db, {
       aggregateType: 'order',
       aggregateId: order.id,
       eventType: 'order.created',
+      deduplicationKey: `order.created:${order.id}`,
       payload: {
         orderId: order.id,
         orderCode: order.order_code,
@@ -2235,6 +2240,9 @@ export class StorefrontService {
         orderStatus: order.status,
         source: 'storefront_checkout',
       },
+      headers: request.headers['x-request-id']
+        ? { requestId: String(request.headers['x-request-id']) }
+        : {},
     });
   }
 
@@ -2272,7 +2280,7 @@ export class StorefrontService {
       source: 'storefront_cart',
     };
 
-    await this.outboxService.enqueue({
+    await this.outboxService.enqueueStandalone({
       aggregateType: 'cart',
       aggregateId: input.cartId,
       eventType: 'cart.item_added',
@@ -2280,7 +2288,7 @@ export class StorefrontService {
     });
 
     if (input.cart.currencyCode === 'YER' && input.cart.subtotal >= 50_000) {
-      await this.outboxService.enqueue({
+      await this.outboxService.enqueueStandalone({
         aggregateType: 'cart',
         aggregateId: input.cartId,
         eventType: 'cart.high_value_detected',
@@ -2289,7 +2297,7 @@ export class StorefrontService {
     }
 
     if (input.cart.totalItems >= 3) {
-      await this.outboxService.enqueue({
+      await this.outboxService.enqueueStandalone({
         aggregateType: 'cart',
         aggregateId: input.cartId,
         eventType: 'cart.strong_intent_detected',
@@ -2319,48 +2327,16 @@ export class StorefrontService {
     };
   }
 
-  private normalizeSocialLinks(value: unknown): Record<string, string | null> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      return {};
-    }
-
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .filter(([key]) => key.trim().length > 0)
-        .map(([key, link]) => [
-          key,
-          typeof link === 'string' && link.trim().length > 0 ? link.trim() : null,
-        ]),
-    );
-  }
-
-  private formatStoreAddress(
-    store: Awaited<ReturnType<StoresRepository['findById']>>,
-  ): string | null {
-    if (!store) {
-      return null;
-    }
-
-    return (
-      [store.address, store.address_details, store.city, store.country]
-        .filter(Boolean)
-        .join(', ') || null
-    );
-  }
-
-  private containsArabic(value: string): boolean {
-    return /[\u0600-\u06FF]/.test(value);
-  }
-
   private async resolveShippingZone(
     storeId: string,
     shippingZoneId?: string,
+    db?: QueryRunner,
   ): Promise<ShippingZoneRecord | null> {
     if (!shippingZoneId) {
       return null;
     }
 
-    const zone = await this.shippingRepository.findActiveById(storeId, shippingZoneId);
+    const zone = await this.shippingRepository.findActiveById(storeId, shippingZoneId, db);
     if (!zone) {
       throw new BadRequestException('Shipping zone not found or inactive');
     }
@@ -2372,6 +2348,7 @@ export class StorefrontService {
     storeId: string,
     zoneId?: string,
     methodId?: string,
+    db?: QueryRunner,
   ): Promise<{
     zone: ShippingZoneRecord;
     methods: Array<ShippingMethodRecord & { ranges: ShippingMethodRangeRecord[] }>;
@@ -2379,10 +2356,10 @@ export class StorefrontService {
     requestedMethodId: string | null;
     shouldAutoSelect: boolean;
   }> {
-    const activeMethods = await this.shippingRepository.listActiveMethodsAcrossZones(storeId);
+    const activeMethods = await this.shippingRepository.listActiveMethodsAcrossZones(storeId, db);
     if (activeMethods.length === 0) {
       throw new BadRequestException(
-        '·«  ÊÃœ ÿ—ﬁ  Ê’Ì· √Ê «” ·«„ „ «Õ… Õ«·Ì« ·Â–« «·„ Ã—. Ì—ÃÏ «· Ê«’· „⁄ «·„ Ã—.',
+        'ŸÑÿß ÿ™Ÿàÿ¨ÿØ ÿ∑ÿ±ŸÇ ÿ™ŸàÿµŸäŸÑ ÿ£Ÿà ÿßÿ≥ÿ™ŸÑÿßŸÖ ŸÖÿ™ÿßÿ≠ÿ© ÿ≠ÿßŸÑŸäÿßŸã ŸÑŸáÿ∞ÿß ÿßŸÑŸÖÿ™ÿ¨ÿ±. Ÿäÿ±ÿ¨Ÿâ ÿßŸÑÿ™ŸàÿßÿµŸÑ ŸÖÿπ ÿßŸÑŸÖÿ™ÿ¨ÿ±.',
       );
     }
 
@@ -2390,15 +2367,15 @@ export class StorefrontService {
       const selected = activeMethods.find((method) => method.id === methodId);
       if (!selected) {
         throw new BadRequestException(
-          'ÿ—Ìﬁ… «· Ê’Ì· «·„Õœœ… ·„  ⁄œ „ «Õ…. Ì—ÃÏ «Œ Ì«— ÿ—Ìﬁ… √Œ—Ï.',
+          'ÿ∑ÿ±ŸäŸÇÿ© ÿßŸÑÿ™ŸàÿµŸäŸÑ ÿßŸÑŸÖÿ≠ÿØÿØÿ© ŸÑŸÖ ÿ™ÿπÿØ ŸÖÿ™ÿßÿ≠ÿ©. Ÿäÿ±ÿ¨Ÿâ ÿßÿÆÿ™Ÿäÿßÿ± ÿ∑ÿ±ŸäŸÇÿ© ÿ£ÿÆÿ±Ÿâ.',
         );
       }
       if (zoneId && selected.shipping_zone_id !== zoneId) {
-        throw new BadRequestException('ÿ—Ìﬁ… «· Ê’Ì· ·«   »⁄ „‰ÿﬁ… «· Ê’Ì· «·„Õœœ….');
+        throw new BadRequestException('ÿ∑ÿ±ŸäŸÇÿ© ÿßŸÑÿ™ŸàÿµŸäŸÑ ŸÑÿß ÿ™ÿ™ÿ®ÿπ ŸÖŸÜÿ∑ŸÇÿ© ÿßŸÑÿ™ŸàÿµŸäŸÑ ÿßŸÑŸÖÿ≠ÿØÿØÿ©.');
       }
-      const zone = await this.resolveShippingZone(storeId, selected.shipping_zone_id);
+      const zone = await this.resolveShippingZone(storeId, selected.shipping_zone_id, db);
       if (!zone) {
-        throw new BadRequestException('«· Ê’Ì· €Ì— „ «Õ ·Â–Â «·„‰ÿﬁ… Õ«·Ì«.');
+        throw new BadRequestException('ÿßŸÑÿ™ŸàÿµŸäŸÑ ÿ∫Ÿäÿ± ŸÖÿ™ÿßÿ≠ ŸÑŸáÿ∞Ÿá ÿßŸÑŸÖŸÜÿ∑ŸÇÿ© ÿ≠ÿßŸÑŸäÿßŸã.');
       }
       return {
         zone,
@@ -2410,9 +2387,9 @@ export class StorefrontService {
     }
 
     if (zoneId) {
-      const zone = await this.resolveShippingZone(storeId, zoneId);
+      const zone = await this.resolveShippingZone(storeId, zoneId, db);
       if (!zone) {
-        throw new BadRequestException('«· Ê’Ì· €Ì— „ «Õ ·Â–Â «·„‰ÿﬁ… Õ«·Ì«.');
+        throw new BadRequestException('ÿßŸÑÿ™ŸàÿµŸäŸÑ ÿ∫Ÿäÿ± ŸÖÿ™ÿßÿ≠ ŸÑŸáÿ∞Ÿá ÿßŸÑŸÖŸÜÿ∑ŸÇÿ© ÿ≠ÿßŸÑŸäÿßŸã.');
       }
       const methods = activeMethods.filter((method) => method.shipping_zone_id === zone.id);
       return {
@@ -2426,9 +2403,9 @@ export class StorefrontService {
 
     if (activeMethods.length === 1) {
       const onlyMethod = activeMethods[0]!;
-      const zone = await this.resolveShippingZone(storeId, onlyMethod.shipping_zone_id);
+      const zone = await this.resolveShippingZone(storeId, onlyMethod.shipping_zone_id, db);
       if (!zone) {
-        throw new BadRequestException('«· Ê’Ì· €Ì— „ «Õ ·Â–Â «·„‰ÿﬁ… Õ«·Ì«.');
+        throw new BadRequestException('ÿßŸÑÿ™ŸàÿµŸäŸÑ ÿ∫Ÿäÿ± ŸÖÿ™ÿßÿ≠ ŸÑŸáÿ∞Ÿá ÿßŸÑŸÖŸÜÿ∑ŸÇÿ© ÿ≠ÿßŸÑŸäÿßŸã.');
       }
       return {
         zone,
@@ -2440,9 +2417,9 @@ export class StorefrontService {
     }
 
     const firstMethod = activeMethods[0]!;
-    const firstZone = await this.resolveShippingZone(storeId, firstMethod.shipping_zone_id);
+    const firstZone = await this.resolveShippingZone(storeId, firstMethod.shipping_zone_id, db);
     if (!firstZone) {
-      throw new BadRequestException('«· Ê’Ì· €Ì— „ «Õ ·Â–Â «·„‰ÿﬁ… Õ«·Ì«.');
+      throw new BadRequestException('ÿßŸÑÿ™ŸàÿµŸäŸÑ ÿ∫Ÿäÿ± ŸÖÿ™ÿßÿ≠ ŸÑŸáÿ∞Ÿá ÿßŸÑŸÖŸÜÿ∑ŸÇÿ© ÿ≠ÿßŸÑŸäÿßŸã.');
     }
     return {
       zone: firstZone,
@@ -2540,14 +2517,10 @@ export class StorefrontService {
     return Math.max(0, Math.floor((subtotal * matched.earnRate) / 100));
   }
 
-  private generateOrderCode(): string {
-    const random = Math.random().toString(36).slice(2, 8).toUpperCase();
-    return `KS-${random}`;
-  }
-
   private async mapCheckoutItemsToInventoryInput(
     storeId: string,
     items: CartItemSnapshot[],
+    db?: QueryRunner,
   ): Promise<Array<{ variantId: string; quantity: number; sku: string }>> {
     const aggregated = new Map<string, { variantId: string; quantity: number; sku: string }>();
 
@@ -2557,6 +2530,7 @@ export class StorefrontService {
           storeId,
           item.product_id,
           item.quantity,
+          db,
         );
 
         for (const row of bundleRows) {
@@ -2637,31 +2611,71 @@ export class StorefrontService {
     orderId: string,
     items: CartItemSnapshot[],
     currency: ResolvedCurrency,
+    promotion: PromotionComputationResult,
+    promotionYER: PromotionComputationResult,
+    loyaltyDiscount: number,
+    loyaltyDiscountYER: number,
   ): Promise<void> {
-    const overrideMap = await this.currencyService.listVariantOverrides(
-      storeId,
+    const overrideMap = await this.currencyService.listVariantOverridesInTransaction(
+      db, storeId,
       items.map((item) => item.variant_id),
     );
-    for (const item of items) {
+    const priced = items.map((item) => {
       const unitPriceYER = Number(item.current_price_yer ?? item.unit_price_yer ?? item.unit_price);
       const unitPrice = this.currencyService.priceFromYer(
         unitPriceYER,
         currency,
         overrideMap.get(item.variant_id) ?? [],
       );
+      return { item, unitPrice, unitPriceYER };
+    });
+    const displayAllocation = allocateDiscountStages(
+      priced.map(({item,unitPrice}) => ({key:item.cart_item_id,amount:unitPrice*item.quantity})),
+      { offerEligibleKeys: promotionYER.offerEligibleLineIds,
+        couponEligibleKeys: promotionYER.couponEligibleLineIds,
+        offerDiscount: promotion.offerDiscount, couponDiscount: promotion.couponDiscount,
+        loyaltyDiscount },
+    );
+    const yerAllocation = allocateDiscountStages(
+      priced.map(({item,unitPriceYER}) => ({key:item.cart_item_id,amount:unitPriceYER*item.quantity})),
+      { offerEligibleKeys: promotionYER.offerEligibleLineIds,
+        couponEligibleKeys: promotionYER.couponEligibleLineIds,
+        offerDiscount: promotionYER.offerDiscount, couponDiscount: promotionYER.couponDiscount,
+        loyaltyDiscount: loyaltyDiscountYER },
+    );
+    for (const { item, unitPrice, unitPriceYER } of priced) {
+      const lineSubtotal=Number((unitPrice*item.quantity).toFixed(2));
+      const lineSubtotalYER=Number((unitPriceYER*item.quantity).toFixed(2));
+      const lineDiscount=displayAllocation.get(item.cart_item_id)??0;
+      const lineDiscountYER=yerAllocation.get(item.cart_item_id)??0;
+      const lineTotal=Number((lineSubtotal-lineDiscount).toFixed(2));
       await this.ordersRepository.insertOrderItem(db, {
         orderId,
         storeId,
         productId: item.product_id,
         variantId: item.variant_id,
         title: item.product_title,
+        variantName: item.variant_title,
         sku: item.sku,
         unitPrice,
         unitPriceYER,
         quantity: item.quantity,
-        lineTotal: unitPrice * item.quantity,
-        lineTotalYER: unitPriceYER * item.quantity,
+        lineTotal,
+        lineTotalYER: Number((lineSubtotalYER-lineDiscountYER).toFixed(2)),
         attributes: item.attributes,
+        currencyCode: currency.currencyCode,
+        productImage: item.product_image,
+        discountAmount: lineDiscount,
+        finalUnitPrice: Number((lineTotal/item.quantity).toFixed(2)),
+        lineSubtotal,
+        lineDiscount,
+        taxSnapshot: {
+          policy: 'not_configured',
+          taxable: false,
+          rate: '0.00',
+          amount: '0.00',
+          includedInPrice: true,
+        },
       });
     }
   }
@@ -2672,19 +2686,20 @@ export class StorefrontService {
     orderId: string,
     input: CheckoutDto,
     checkoutData: CheckoutData,
-  ): Promise<void> {
+  ): Promise<string> {
     if (!checkoutData.paymentSnapshot) {
-      throw new BadRequestException('Ì—ÃÏ «Œ Ì«— ÿ—Ìﬁ… œ›⁄ „ «Õ… ·Â–« «·„ Ã—.');
+      throw new BadRequestException('Ÿäÿ±ÿ¨Ÿâ ÿßÿÆÿ™Ÿäÿßÿ± ÿ∑ÿ±ŸäŸÇÿ© ÿØŸÅÿπ ŸÖÿ™ÿßÿ≠ÿ© ŸÑŸáÿ∞ÿß ÿßŸÑŸÖÿ™ÿ¨ÿ±.');
     }
     const snapshot = checkoutData.paymentSnapshot;
-    const status = snapshot.type === 'cod' ? 'pending' : 'under_review';
-    await this.paymentMethodsRepository.createPayment(db, {
+    const status = snapshot.type === 'cod' ? 'pending' : 'submitted';
+    return this.paymentMethodsRepository.createPayment(db, {
       storeId,
       orderId,
       amount: checkoutData.total,
       status,
       snapshot,
       amountYER: checkoutData.totalYER,
+      currencyCode: checkoutData.currency.currencyCode,
       payerReference: input.payerReference?.trim() || null,
       payerReceiptMediaAssetId: input.payerReceiptMediaAssetId ?? null,
       payerReceiptUrl: checkoutData.payerReceiptUrl,
@@ -2692,11 +2707,41 @@ export class StorefrontService {
     });
   }
 
+  private async attachCheckoutConversionsInTransaction(
+    db: QueryRunner,
+    storeId: string,
+    input: CheckoutDto,
+    order: OrderRecord,
+  ): Promise<void> {
+    await db.query(
+      `UPDATE abandoned_carts
+       SET recovered_at = NOW(), recovered_order_id = $3, updated_at = NOW()
+       WHERE store_id = $1 AND cart_id = $2 AND recovered_at IS NULL AND expires_at > NOW()`,
+      [storeId, input.cartId, order.id],
+    );
+    const restockToken = input.restockToken?.trim();
+    if (restockToken && order.customer_id) {
+      await db.query(
+        `UPDATE product_restock_notifications
+         SET created_order_id = $4, conversion_amount = $5, converted_at = NOW(), updated_at = NOW()
+         WHERE token = $1 AND store_id = $2 AND customer_id = $3
+           AND created_order_id IS NULL AND expires_at > NOW()`,
+        [restockToken, storeId, order.customer_id, order.id, Number(order.total)],
+      );
+    }
+  }
+
+  private maybeInjectCheckoutFailure(point: string): void {
+    if (process.env.NODE_ENV === 'test' && process.env.STAGE3_CHECKOUT_FAILURE_POINT === point) {
+      throw new Error(`Injected checkout failure at ${point}`);
+    }
+  }
+
   private mapStatusHistory(entry: OrderStatusHistoryRecord) {
     return {
-      from: entry.old_status,
-      to: entry.new_status,
-      note: entry.note,
+      from: entry.from_status,
+      to: entry.to_status,
+      note: entry.reason,
       createdAt: entry.created_at,
     };
   }

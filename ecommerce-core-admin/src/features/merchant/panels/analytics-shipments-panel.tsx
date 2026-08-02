@@ -2,32 +2,20 @@ import { Alert, Box, List, ListItem, ListItemText, Paper, Typography } from '@mu
 import type { MerchantRequester } from '../merchant-dashboard.types';
 import type { AnalyticsShipments } from '../types';
 import { AppPage, PageHeader, StatCard } from '../components/ui';
-import { LockedFeaturePage, useFeatureGate } from '../feature-gates';
 import { AnalyticsFiltersBar, AnalyticsLoadingState, buildAnalyticsQuery, useAnalyticsData, useAnalyticsFilters } from './analytics-common';
 
 export function AnalyticsShipmentsPanel({ request }: { request: MerchantRequester }) {
   const [filters, setFilters] = useAnalyticsFilters();
   const query = buildAnalyticsQuery(filters);
-  const featureGate = useFeatureGate(request, 'advanced_analytics');
   const { data, loading, error, refresh } = useAnalyticsData<AnalyticsShipments>(
     request,
     '/analytics/delivery',
     query,
-    undefined,
-    featureGate.isEnabled,
   );
 
   return (
     <AppPage>
       <PageHeader title="تحليلات التوصيل والاستلام" description="متابعة الطلبات حسب طريقة الاستلام ورسوم التوصيل والمناطق الأكثر استخداماً." />
-      {featureGate.loading ? (
-        <AnalyticsLoadingState />
-      ) : featureGate.error ? (
-        <Alert severity="error">{featureGate.error}</Alert>
-      ) : featureGate.isLocked ? (
-        <LockedFeaturePage />
-      ) : (
-        <>
           <AnalyticsFiltersBar filters={filters} onChange={setFilters} onRefresh={refresh} />
           {error ? <Alert severity="error">{error}</Alert> : null}
           {loading ? (
@@ -72,8 +60,6 @@ export function AnalyticsShipmentsPanel({ request }: { request: MerchantRequeste
               </Box>
             </Box>
           ) : null}
-        </>
-      )}
     </AppPage>
   );
 }

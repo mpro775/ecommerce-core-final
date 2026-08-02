@@ -11,13 +11,9 @@ import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { MediaService, type AltTextCoverageResponse } from '../media/media.service';
 import { CurrencyService, type StoreCurrencyResponse } from '../currency/currency.service';
 import {
-  CURRENCY_PRICING_MODES,
-  CURRENCY_SYMBOL_POSITIONS,
   DEFAULT_STORE_COUNTRY,
   ORDER_CONFIRMATION_MODES,
-  STORE_BUSINESS_CATEGORIES,
   STORE_CURRENCY_CODES,
-  STORE_LANGUAGES,
   STORE_SOCIAL_LINK_KEYS,
   STORE_TIMEZONES,
   STORE_WORKING_DAYS,
@@ -26,11 +22,6 @@ import {
   WAREHOUSE_SELECTION_MODES,
   YEMEN_GOVERNORATES,
 } from './constants/store-settings.constants';
-import {
-  isReservedStoreSubdomain,
-  isValidStoreSlug,
-  normalizeStoreSlug,
-} from './constants/store-slug.constants';
 import type { UpdateStoreSettingsDto } from './dto/update-store-settings.dto';
 import {
   StoresRepository,
@@ -52,26 +43,6 @@ interface WorkingHoursDay {
 type SocialLinks = Partial<Record<(typeof STORE_SOCIAL_LINK_KEYS)[number], string | null>>;
 
 type JsonObject = Record<string, unknown>;
-
-export interface StoreProfileSettingsResponse {
-  nameAr: string | null;
-  nameEn: string | null;
-  descriptionAr: string | null;
-  descriptionEn: string | null;
-  logo: string | null;
-  icon: string | null;
-  primaryColor: string;
-  secondaryColor: string;
-  supportPhone: string | null;
-  supportEmail: string | null;
-  whatsapp: string | null;
-  country: string;
-  timezone: string;
-  defaultLanguage: (typeof STORE_LANGUAGES)[number];
-  supportedLanguages: Array<(typeof STORE_LANGUAGES)[number]>;
-}
-
-
 
 export interface StoreOrderSettingsResponse {
   minimumOrderValue: number;
@@ -112,15 +83,6 @@ export interface StoreMobileAppConfigResponse {
   forceUpdate: boolean;
   maintenanceMode: boolean;
   maintenanceMessage: string | null;
-  storeLinks: JsonObject;
-  socialLinks: JsonObject;
-  enabledFeatures: JsonObject;
-  showRegistration: boolean;
-  showOtp: boolean;
-  showWallet: boolean;
-  showLoyalty: boolean;
-  showAffiliates: boolean;
-  showReviews: boolean;
 }
 
 export interface StoreSettingsResponse {
@@ -132,12 +94,6 @@ export interface StoreSettingsResponse {
   descriptionEn: string | null;
   description: string | null;
   slug: string;
-  logoMediaAssetId: string | null;
-  logoUrl: string | null;
-  faviconMediaAssetId: string | null;
-  faviconUrl: string | null;
-  businessCategory: string | null;
-  onboardingCompleted: boolean;
   phone: string | null;
   address: string | null;
   country: string;
@@ -152,12 +108,6 @@ export interface StoreSettingsResponse {
   defaultCurrencyCode: string;
   currencies: StoreCurrencyResponse[];
   timezone: string;
-  shippingPolicy: string | null;
-  returnPolicy: string | null;
-  privacyPolicy: string | null;
-  termsAndConditions: string | null;
-  loyaltyPolicy: string | null;
-  profile: StoreProfileSettingsResponse;
   orderSettings: StoreOrderSettingsResponse;
   inventorySettings: StoreInventorySettingsResponse;
   taxSettings: StoreTaxSettingsResponse;
@@ -171,20 +121,11 @@ export interface StoreSettingsOptionsResponse {
   governorates: readonly string[];
   workingDays: readonly string[];
   socialPlatforms: readonly string[];
-  businessCategories: readonly string[];
-  languages: readonly string[];
-}
-
-export interface StoreSlugAvailabilityResponse {
-  isValidFormat: boolean;
-  isAvailable: boolean;
-  normalizedSlug: string;
-  reason?: 'reserved' | 'invalid_format' | 'taken';
 }
 
 export interface StoreAccessibilityReportResponse {
   storeId: string;
-  themeAuditSummary: {
+  accessibilityAuditSummary: {
     score: number;
     wcagLevel: 'AA';
     criticalIssues: number;
@@ -231,43 +172,6 @@ export class StoresService {
       governorates: YEMEN_GOVERNORATES,
       workingDays: STORE_WORKING_DAYS,
       socialPlatforms: STORE_SOCIAL_LINK_KEYS,
-      businessCategories: STORE_BUSINESS_CATEGORIES,
-      languages: STORE_LANGUAGES,
-    };
-  }
-
-  async checkSlugAvailability(
-    currentUser: AuthUser,
-    rawSlug: string,
-  ): Promise<StoreSlugAvailabilityResponse> {
-    const normalizedSlug = normalizeStoreSlug(rawSlug);
-    if (isReservedStoreSubdomain(normalizedSlug)) {
-      return {
-        isValidFormat: true,
-        isAvailable: false,
-        normalizedSlug,
-        reason: 'reserved',
-      };
-    }
-
-    const isValidFormat = isValidStoreSlug(normalizedSlug);
-    if (!isValidFormat) {
-      return {
-        isValidFormat: false,
-        isAvailable: false,
-        normalizedSlug,
-        reason: 'invalid_format',
-      };
-    }
-
-    const existingStore = await this.storesRepository.findStoreBySlug(normalizedSlug);
-    const isAvailable = !existingStore || existingStore.id === currentUser.storeId;
-
-    return {
-      isValidFormat: true,
-      isAvailable,
-      normalizedSlug,
-      ...(isAvailable ? {} : { reason: 'taken' as const }),
     };
   }
 
@@ -288,7 +192,7 @@ export class StoresService {
       this.storesRepository.findGeneralSettings(currentUser.storeId),
     ]);
     const updatedGeneralSettings = await this.storesRepository.updateGeneralSettings(
-      this.buildGeneralSettingsPayload(updated, currentGeneralSettings, currencies, input),
+      this.buildGeneralSettingsPayload(updated, currentGeneralSettings, input),
     );
     await this.logSettingsUpdate(currentUser, context);
 
@@ -382,7 +286,7 @@ export class StoresService {
 
     return {
       storeId,
-      themeAuditSummary: {
+      accessibilityAuditSummary: {
         score: altTextCoverage.completionRate,
         wcagLevel: 'AA',
         criticalIssues: 0,
@@ -408,23 +312,11 @@ export class StoresService {
   private async buildUpdatePayload(current: StoreSettingsRecord, input: UpdateStoreSettingsDto) {
     const hasTimezone = this.hasOwn(input, 'timezone');
     const hasCurrencyCode = this.hasOwn(input, 'currencyCode');
-    const hasSlug = this.hasOwn(input, 'slug');
     const hasCountry = this.hasOwn(input, 'country');
     const hasCity = this.hasOwn(input, 'city');
     const hasAddressDetails = this.hasOwn(input, 'addressDetails');
     const hasAddress = this.hasOwn(input, 'address');
-    const hasLogoMediaAssetId = this.hasOwn(input, 'logoMediaAssetId');
-    const hasLogoUrl = this.hasOwn(input, 'logoUrl');
-    const hasFaviconMediaAssetId = this.hasOwn(input, 'faviconMediaAssetId');
-    const hasFaviconUrl = this.hasOwn(input, 'faviconUrl');
-    const hasBusinessCategory = this.hasOwn(input, 'businessCategory');
-    const hasOnboardingCompleted = this.hasOwn(input, 'onboardingCompleted');
     const hasPhone = this.hasOwn(input, 'phone');
-    const hasShippingPolicy = this.hasOwn(input, 'shippingPolicy');
-    const hasReturnPolicy = this.hasOwn(input, 'returnPolicy');
-    const hasPrivacyPolicy = this.hasOwn(input, 'privacyPolicy');
-    const hasTerms = this.hasOwn(input, 'termsAndConditions');
-    const hasLoyaltyPolicy = this.hasOwn(input, 'loyaltyPolicy');
     const hasLatitude = this.hasOwn(input, 'latitude');
     const hasLongitude = this.hasOwn(input, 'longitude');
     const hasNameAr = this.hasOwn(input, 'nameAr');
@@ -462,23 +354,6 @@ export class StoresService {
       ? this.normalizeOptionalText(input.address, 250)
       : (this.composeAddress(country, city, addressDetails) ?? current.address);
 
-    let resolvedSlug = current.slug;
-    if (hasSlug) {
-      const candidateSlug = this.normalizeOptionalText(input.slug, 50);
-      const normalizedCandidateSlug = candidateSlug ? normalizeStoreSlug(candidateSlug) : null;
-      if (normalizedCandidateSlug && !isValidStoreSlug(normalizedCandidateSlug)) {
-        throw new BadRequestException('Store slug format is invalid.');
-      }
-
-      if (normalizedCandidateSlug) {
-        const existingStore = await this.storesRepository.findStoreBySlug(normalizedCandidateSlug);
-        if (existingStore && existingStore.id !== current.id) {
-          throw new BadRequestException('Store slug already in use.');
-        }
-        resolvedSlug = normalizedCandidateSlug;
-      }
-    }
-
     const resolvedName = this.hasOwn(input, 'name')
       ? (this.normalizeOptionalText(input.name, 120) ?? current.name)
       : current.name;
@@ -506,25 +381,11 @@ export class StoresService {
       nameEn: resolvedNameEn,
       descriptionAr: resolvedDescriptionAr,
       descriptionEn: resolvedDescriptionEn,
-      slug: resolvedSlug,
       currencyCode:
         hasCurrencyCode && typeof input.currencyCode === 'string'
           ? input.currencyCode
           : current.currency_code,
       timezone: resolvedTimezone,
-      logoMediaAssetId: hasLogoMediaAssetId
-        ? (input.logoMediaAssetId ?? null)
-        : current.logo_media_asset_id,
-      logoUrl: hasLogoUrl ? this.normalizeOptionalText(input.logoUrl, 400) : current.logo_url,
-      faviconMediaAssetId: hasFaviconMediaAssetId
-        ? (input.faviconMediaAssetId ?? null)
-        : current.favicon_media_asset_id,
-      faviconUrl: hasFaviconUrl
-        ? this.normalizeOptionalText(input.faviconUrl, 400)
-        : current.favicon_url,
-      businessCategory: hasBusinessCategory
-        ? (input.businessCategory ?? null)
-        : current.business_category,
       phone: hasPhone ? this.normalizeOptionalText(input.phone, 30) : current.phone,
       address: resolvedAddress,
       country,
@@ -534,26 +395,6 @@ export class StoresService {
       longitude,
       workingHours,
       socialLinks,
-      shippingPolicy: hasShippingPolicy
-        ? this.normalizeOptionalText(input.shippingPolicy, 20000)
-        : current.shipping_policy,
-      returnPolicy: hasReturnPolicy
-        ? this.normalizeOptionalText(input.returnPolicy, 20000)
-        : current.return_policy,
-      privacyPolicy: hasPrivacyPolicy
-        ? this.normalizeOptionalText(input.privacyPolicy, 20000)
-        : current.privacy_policy,
-      termsOfService: hasTerms
-        ? this.normalizeOptionalText(input.termsAndConditions, 20000)
-        : current.terms_of_service,
-      loyaltyPolicy: hasLoyaltyPolicy
-        ? this.normalizeOptionalText(input.loyaltyPolicy, 20000)
-        : current.loyalty_policy,
-      onboardingCompletedAt: hasOnboardingCompleted
-        ? input.onboardingCompleted
-          ? new Date()
-          : null
-        : current.onboarding_completed_at,
     };
   }
 
@@ -579,7 +420,6 @@ export class StoresService {
     generalSettings: StoreGeneralSettingsRecord | null = null,
   ): StoreSettingsResponse {
     const defaultCurrency = currencies.find((currency) => currency.isDefault);
-    const profile = this.toProfileSettingsResponse(store, generalSettings?.profile_settings);
     const orderSettings = this.toOrderSettingsResponse(generalSettings?.order_settings);
     const inventorySettings = this.toInventorySettingsResponse(
       generalSettings?.inventory_settings,
@@ -595,12 +435,6 @@ export class StoresService {
       descriptionEn: store.description_en,
       description: store.description_ar ?? store.description_en ?? null,
       slug: store.slug,
-      logoMediaAssetId: store.logo_media_asset_id,
-      logoUrl: store.logo_url,
-      faviconMediaAssetId: store.favicon_media_asset_id,
-      faviconUrl: store.favicon_url,
-      businessCategory: store.business_category,
-      onboardingCompleted: Boolean(store.onboarding_completed_at),
       phone: store.phone,
       address: store.address,
       country: this.normalizeCountry(store.country),
@@ -616,12 +450,6 @@ export class StoresService {
       defaultCurrencyCode: defaultCurrency?.currencyCode ?? store.default_currency_code ?? 'YER',
       currencies,
       timezone: store.timezone,
-      shippingPolicy: store.shipping_policy,
-      returnPolicy: store.return_policy,
-      privacyPolicy: store.privacy_policy,
-      termsAndConditions: store.terms_of_service,
-      loyaltyPolicy: store.loyalty_policy,
-      profile,
       orderSettings,
       inventorySettings,
       taxSettings,
@@ -632,26 +460,14 @@ export class StoresService {
   private buildGeneralSettingsPayload(
     store: StoreSettingsRecord,
     current: StoreGeneralSettingsRecord | null,
-    currencies: StoreCurrencyResponse[],
     input: UpdateStoreSettingsDto,
   ): {
     storeId: string;
-    profileSettings: JsonObject;
     orderSettings: JsonObject;
     inventorySettings: JsonObject;
     taxSettings: JsonObject;
     mobileAppConfig: JsonObject;
   } {
-    const profileSettings = this.mergeSettings(
-      this.defaultProfileSettings(store),
-      current?.profile_settings,
-      {
-        ...this.pickDefined(input.profile),
-        ...(input.profile?.icon !== undefined ? { iconUrl: input.profile.icon } : {}),
-        ...(this.hasOwn(input, 'phone') ? { supportPhone: store.phone } : {}),
-        ...(this.hasOwn(input, 'faviconUrl') ? { iconUrl: store.favicon_url } : {}),
-      },
-    );
     const orderSettings = this.mergeSettings(
       this.defaultOrderSettings(),
       current?.order_settings,
@@ -668,58 +484,19 @@ export class StoresService {
       this.pickDefined(input.taxSettings),
     );
     const mobileAppConfig = this.mergeSettings(
-      this.defaultMobileAppConfig(profileSettings),
+      this.defaultMobileAppConfig(),
       current?.mobile_app_config,
       this.pickDefined(input.mobileAppConfig),
     );
 
     return {
       storeId: store.id,
-      profileSettings: this.normalizeProfileSettings(profileSettings),
       orderSettings: this.normalizeOrderSettings(orderSettings),
       inventorySettings: this.normalizeInventorySettings(inventorySettings),
       taxSettings: this.normalizeTaxSettings(taxSettings),
       mobileAppConfig: this.normalizeMobileAppConfig(mobileAppConfig),
     };
   }
-
-  private toProfileSettingsResponse(
-    store: StoreSettingsRecord,
-    settings: JsonObject | undefined,
-  ): StoreProfileSettingsResponse {
-    const normalized = this.normalizeProfileSettings(
-      this.mergeSettings(this.defaultProfileSettings(store), settings),
-    );
-    return {
-      nameAr: store.name_ar ?? store.name,
-      nameEn: store.name_en,
-      descriptionAr: store.description_ar,
-      descriptionEn: store.description_en,
-      logo: store.logo_url,
-      icon: this.readString(normalized, 'iconUrl', store.favicon_url ?? store.logo_url),
-      primaryColor: this.readColor(normalized, 'primaryColor', '#111827'),
-      secondaryColor: this.readColor(normalized, 'secondaryColor', '#F59E0B'),
-      supportPhone: this.readString(normalized, 'supportPhone', store.phone),
-      supportEmail: this.readString(normalized, 'supportEmail', null),
-      whatsapp: this.readString(
-        normalized,
-        'whatsapp',
-        typeof store.social_links?.whatsapp === 'string' ? store.social_links.whatsapp : null,
-      ),
-      country: this.normalizeCountry(store.country),
-      timezone: store.timezone,
-      defaultLanguage: this.readEnum(normalized, 'defaultLanguage', STORE_LANGUAGES, 'ar'),
-      supportedLanguages: this.readEnumArray(
-        normalized,
-        'supportedLanguages',
-        STORE_LANGUAGES,
-        [...STORE_LANGUAGES],
-      ),
-    };
-  }
-
-
-
   private toOrderSettingsResponse(settings: JsonObject | undefined): StoreOrderSettingsResponse {
     const normalized = this.normalizeOrderSettings(
       this.mergeSettings(this.defaultOrderSettings(), settings),
@@ -785,7 +562,7 @@ export class StoresService {
 
   private toMobileAppConfigResponse(settings: JsonObject | undefined): StoreMobileAppConfigResponse {
     const normalized = this.normalizeMobileAppConfig(
-      this.mergeSettings(this.defaultMobileAppConfig({}), settings),
+      this.mergeSettings(this.defaultMobileAppConfig(), settings),
     );
     return {
       latestAndroidVersion: this.readString(normalized, 'latestAndroidVersion', null),
@@ -795,28 +572,6 @@ export class StoresService {
       forceUpdate: this.readBoolean(normalized, 'forceUpdate', false),
       maintenanceMode: this.readBoolean(normalized, 'maintenanceMode', false),
       maintenanceMessage: this.readString(normalized, 'maintenanceMessage', null),
-      storeLinks: this.readObject(normalized, 'storeLinks', {}),
-      socialLinks: this.readObject(normalized, 'socialLinks', {}),
-      enabledFeatures: this.readObject(normalized, 'enabledFeatures', {}),
-      showRegistration: this.readBoolean(normalized, 'showRegistration', true),
-      showOtp: this.readBoolean(normalized, 'showOtp', true),
-      showWallet: this.readBoolean(normalized, 'showWallet', false),
-      showLoyalty: this.readBoolean(normalized, 'showLoyalty', true),
-      showAffiliates: this.readBoolean(normalized, 'showAffiliates', false),
-      showReviews: this.readBoolean(normalized, 'showReviews', true),
-    };
-  }
-
-  private defaultProfileSettings(store: StoreSettingsRecord): JsonObject {
-    return {
-      iconUrl: store.favicon_url ?? store.logo_url,
-      primaryColor: '#111827',
-      secondaryColor: '#F59E0B',
-      supportPhone: store.phone,
-      supportEmail: null,
-      whatsapp: typeof store.social_links?.whatsapp === 'string' ? store.social_links.whatsapp : null,
-      defaultLanguage: 'ar',
-      supportedLanguages: ['ar', 'en'],
     };
   }
 
@@ -857,7 +612,7 @@ export class StoresService {
     };
   }
 
-  private defaultMobileAppConfig(profileSettings: JsonObject): JsonObject {
+  private defaultMobileAppConfig(): JsonObject {
     return {
       latestAndroidVersion: null,
       latestIosVersion: null,
@@ -866,24 +621,6 @@ export class StoresService {
       forceUpdate: false,
       maintenanceMode: false,
       maintenanceMessage: null,
-      storeLinks: {},
-      socialLinks: {
-        whatsapp: this.readString(profileSettings, 'whatsapp', null),
-      },
-      enabledFeatures: {
-        registration: true,
-        otp: true,
-        wallet: false,
-        loyalty: true,
-        affiliates: false,
-        reviews: true,
-      },
-      showRegistration: true,
-      showOtp: true,
-      showWallet: false,
-      showLoyalty: true,
-      showAffiliates: false,
-      showReviews: true,
     };
   }
 
@@ -907,28 +644,6 @@ export class StoresService {
     return Object.fromEntries(
       Object.entries(value as JsonObject).filter(([, entryValue]) => entryValue !== undefined),
     );
-  }
-
-  private normalizeProfileSettings(settings: JsonObject): JsonObject {
-    const defaultLanguage = this.readEnum(settings, 'defaultLanguage', STORE_LANGUAGES, 'ar');
-    const supportedLanguages = this.readEnumArray(
-      settings,
-      'supportedLanguages',
-      STORE_LANGUAGES,
-      [...STORE_LANGUAGES],
-    );
-    return {
-      iconUrl: this.readString(settings, 'iconUrl', null),
-      primaryColor: this.readColor(settings, 'primaryColor', '#111827'),
-      secondaryColor: this.readColor(settings, 'secondaryColor', '#F59E0B'),
-      supportPhone: this.readString(settings, 'supportPhone', null),
-      supportEmail: this.readString(settings, 'supportEmail', null),
-      whatsapp: this.readString(settings, 'whatsapp', null),
-      defaultLanguage,
-      supportedLanguages: supportedLanguages.includes(defaultLanguage)
-        ? supportedLanguages
-        : [defaultLanguage, ...supportedLanguages],
-    };
   }
 
   private normalizeOrderSettings(settings: JsonObject): JsonObject {
@@ -1001,15 +716,6 @@ export class StoresService {
       forceUpdate: this.readBoolean(settings, 'forceUpdate', false),
       maintenanceMode: this.readBoolean(settings, 'maintenanceMode', false),
       maintenanceMessage: this.readString(settings, 'maintenanceMessage', null),
-      storeLinks: this.readObject(settings, 'storeLinks', {}),
-      socialLinks: this.readObject(settings, 'socialLinks', {}),
-      enabledFeatures: this.readObject(settings, 'enabledFeatures', {}),
-      showRegistration: this.readBoolean(settings, 'showRegistration', true),
-      showOtp: this.readBoolean(settings, 'showOtp', true),
-      showWallet: this.readBoolean(settings, 'showWallet', false),
-      showLoyalty: this.readBoolean(settings, 'showLoyalty', true),
-      showAffiliates: this.readBoolean(settings, 'showAffiliates', false),
-      showReviews: this.readBoolean(settings, 'showReviews', true),
     };
   }
 
@@ -1027,11 +733,6 @@ export class StoresService {
     }
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : fallback;
-  }
-
-  private readColor(settings: JsonObject, key: string, fallback: string): string {
-    const value = this.readString(settings, key, fallback) ?? fallback;
-    return /^#[A-Fa-f0-9]{6}$/.test(value) ? value : fallback;
   }
 
   private readNumber(settings: JsonObject, key: string, fallback: number): number {
@@ -1062,15 +763,6 @@ export class StoresService {
       .map((item) => item.trim());
   }
 
-  private readNumberRecord(settings: JsonObject, key: string): Record<string, number> {
-    const value = this.readObject(settings, key, {});
-    return Object.fromEntries(
-      Object.entries(value)
-        .map(([entryKey, entryValue]) => [entryKey, Number(entryValue)] as const)
-        .filter(([, entryValue]) => Number.isFinite(entryValue)),
-    );
-  }
-
   private readEnum<T extends readonly string[]>(
     settings: JsonObject,
     key: string,
@@ -1079,23 +771,6 @@ export class StoresService {
   ): T[number] {
     const value = settings[key];
     return typeof value === 'string' && allowed.includes(value) ? value : fallback;
-  }
-
-  private readEnumArray<T extends readonly string[]>(
-    settings: JsonObject,
-    key: string,
-    allowed: T,
-    fallback: T[number][],
-  ): T[number][] {
-    const value = settings[key];
-    if (!Array.isArray(value)) {
-      return fallback;
-    }
-
-    const filtered = value.filter(
-      (item): item is T[number] => typeof item === 'string' && allowed.includes(item),
-    );
-    return filtered.length > 0 ? [...new Set(filtered)] : fallback;
   }
 
   private hasOwn(input: UpdateStoreSettingsDto, key: keyof UpdateStoreSettingsDto): boolean {
@@ -1145,7 +820,7 @@ export class StoresService {
   }
 
   private isDamagedText(value: string): boolean {
-    return /[\uFFFDØÙ]/.test(value);
+    return /[\uFFFD\u00D8\u00D9]/u.test(value);
   }
 
   private resolveWorkingHours(

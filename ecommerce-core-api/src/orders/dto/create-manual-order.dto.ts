@@ -99,4 +99,9 @@ export class CreateManualOrderDto {
   @IsString()
   @MaxLength(3)
   currencyCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  priceOverrideReason?: string;
 }

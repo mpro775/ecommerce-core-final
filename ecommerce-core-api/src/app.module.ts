@@ -20,7 +20,6 @@ import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { ProductsModule } from './products/products.module';
-import { StoreCapabilitiesModule } from './store-capabilities/store-capabilities.module';
 import { ShippingModule } from './shipping/shipping.module';
 import { StoresModule } from './stores/stores.module';
 import { StorefrontModule } from './storefront/storefront.module';
@@ -36,7 +35,7 @@ import { LoyaltyModule } from './loyalty/loyalty.module';
 import { AffiliatesModule } from './affiliates/affiliates.module';
 import { SupportModule } from './support/support.module';
 import { PaymentMethodsModule } from './payment-methods/payment-methods.module';
-import { StoreReadinessModule } from './store-readiness/store-readiness.module';
+import { CommercialModule } from './commercial/commercial.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -51,6 +50,7 @@ import { StoreReadinessModule } from './store-readiness/store-readiness.module';
       },
     ]),
     DatabaseModule,
+    CommercialModule,
     EmailModule,
     ObservabilityModule,
     AuditModule,
@@ -65,7 +65,6 @@ import { StoreReadinessModule } from './store-readiness/store-readiness.module';
     AttributesModule,
     FiltersModule,
     ProductsModule,
-    StoreCapabilitiesModule,
     MediaModule,
     ShippingModule,
     PromotionsModule,
@@ -82,7 +81,6 @@ import { StoreReadinessModule } from './store-readiness/store-readiness.module';
     AffiliatesModule,
     SupportModule,
     PaymentMethodsModule,
-    StoreReadinessModule,
   ],
   providers: [
     {

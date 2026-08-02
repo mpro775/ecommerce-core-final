@@ -11,15 +11,6 @@ interface PublicAppConfigResponse {
   storeId: string;
   storeSlug: string;
   storeSettings: StoreSettingsResponse & {
-    email: string | null;
-    policies: {
-      shippingPolicy: string | null;
-      returnPolicy: string | null;
-      privacyPolicy: string | null;
-      termsAndConditions: string | null;
-      loyaltyPolicy: string | null;
-    };
-    language: 'ar' | 'en';
     seoSettings: Awaited<ReturnType<SeoService['getSettings']>>;
   };
 }
@@ -54,15 +45,6 @@ export class PublicStoreController {
       storeSettings: {
         ...settings,
         currencyCode: selectedCurrency.currencyCode,
-        email: settings.profile.supportEmail,
-        policies: {
-          shippingPolicy: settings.shippingPolicy,
-          returnPolicy: settings.returnPolicy,
-          privacyPolicy: settings.privacyPolicy,
-          termsAndConditions: settings.termsAndConditions,
-          loyaltyPolicy: settings.loyaltyPolicy,
-        },
-        language: settings.profile.defaultLanguage,
         seoSettings,
       },
     };

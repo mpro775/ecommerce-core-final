@@ -4,7 +4,6 @@ import { parseApiError } from '../../lib/api-error';
 
 export interface MerchantRequestOptions {
   requiresAuth?: boolean;
-  includeStoreHeader?: boolean;
   responseType?: 'json' | 'blob' | 'text';
 }
 
@@ -144,16 +143,11 @@ function mergeHeaders(
 ): Headers {
   const merged = new Headers(headers ?? undefined);
   const requiresAuth = options.requiresAuth ?? true;
-  const includeStoreHeader = options.includeStoreHeader ?? requiresAuth;
   const hasBody = body !== undefined && body !== null;
   const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
 
   if (requiresAuth) {
     merged.set('authorization', `Bearer ${session.accessToken}`);
-  }
-
-  if (includeStoreHeader) {
-    merged.set('x-store-id', session.user.storeId);
   }
 
   if (!merged.has('content-type') && hasBody && !isFormData) {

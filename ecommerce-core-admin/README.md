@@ -1,6 +1,6 @@
 # General Ecommerce Admin Dashboard
 
-Admin dashboard for the General Ecommerce Platform.
+Admin dashboard for General Ecommerce.
 
 ## Tech Stack
 

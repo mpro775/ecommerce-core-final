@@ -3,13 +3,13 @@ import { AttributesModule } from '../attributes/attributes.module';
 import { CategoriesModule } from '../categories/categories.module';
 import { CustomersModule } from '../customers/customers.module';
 import { CurrencyModule } from '../currency/currency.module';
+import { CheckoutModule } from '../checkout/checkout.module';
 import { FiltersModule } from '../filters/filters.module';
 import { IdempotencyModule } from '../idempotency/idempotency.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { OrdersModule } from '../orders/orders.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { ProductsModule } from '../products/products.module';
-import { StoreCapabilitiesModule } from '../store-capabilities/store-capabilities.module';
 import { ShippingModule } from '../shipping/shipping.module';
 import { StoresModule } from '../stores/stores.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
@@ -41,10 +41,10 @@ import { StorefrontService } from './storefront.service';
     AffiliatesModule,
     MediaModule,
     forwardRef(() => PaymentMethodsModule),
-    StoreCapabilitiesModule,
     IdempotencyModule,
     SeoModule,
     CurrencyModule,
+    CheckoutModule,
     forwardRef(() => CustomersModule),
   ],
   controllers: [StorefrontController, PublicStoreController],

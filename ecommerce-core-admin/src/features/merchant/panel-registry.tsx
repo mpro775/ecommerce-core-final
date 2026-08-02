@@ -21,8 +21,6 @@ import { RestockAlertsPanel } from './panels/restock-alerts-panel';
 import { ShippingPanel } from './panels/shipping-panel';
 import { StaffPanel } from './panels/staff-panel';
 import { StoreSettingsPanel } from './panels/store-settings-panel';
-import { StorePagesPanel } from './panels/store-pages-panel';
-import { SetupPanel } from './panels/setup-panel';
 import { SupportTicketsPanel } from './panels/support-tickets-panel';
 import { WebhooksPanel } from './panels/webhooks-panel';
 import { WarehousesPanel } from './panels/warehouses-panel';
@@ -45,10 +43,8 @@ const panelRenderers: Record<MerchantTabKey, (props: MerchantPanelProps) => Reac
       session={props.session}
       request={props.request}
       storeSettings={props.storeSettings ?? null}
-      onOpenSetup={() => props.onNavigate?.('setup')}
     />
   ),
-  setup: (props) => <SetupPanel request={props.request} onNavigate={(tab) => props.onNavigate?.(tab)} />,
   analyticsGeneral: (props) => <AnalyticsGeneralPanel request={props.request} />,
   analyticsLive: (props) => <AnalyticsLivePanel request={props.request} />,
   analyticsProducts: (props) => <AnalyticsProductsPanel request={props.request} />,
@@ -65,7 +61,6 @@ const panelRenderers: Record<MerchantTabKey, (props: MerchantPanelProps) => Reac
       {...(props.onStoreSettingsUpdated ? { onSettingsUpdated: props.onStoreSettingsUpdated } : {})}
     />
   ),
-  storePages: (props) => <StorePagesPanel request={props.request} />,
   products: (props) => <ProductsPanel request={props.request} />,
   inventory: (props) => <InventoryPanel request={props.request} />,
   warehouses: (props) => <WarehousesPanel request={props.request} />,

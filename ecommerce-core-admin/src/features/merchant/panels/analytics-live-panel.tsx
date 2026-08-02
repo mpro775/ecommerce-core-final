@@ -2,7 +2,6 @@ import { Alert, Box, Paper, Stack, Table, TableBody, TableCell, TableHead, Table
 import type { MerchantRequester } from '../merchant-dashboard.types';
 import type { AnalyticsLive } from '../types';
 import { AppPage, PageHeader, StatCard } from '../components/ui';
-import { LockedFeaturePage, useFeatureGate } from '../feature-gates';
 import { AnalyticsFiltersBar, AnalyticsLoadingState, buildAnalyticsQuery, useAnalyticsData, useAnalyticsFilters } from './analytics-common';
 
 function money(value: number): string {
@@ -12,26 +11,16 @@ function money(value: number): string {
 export function AnalyticsLivePanel({ request }: { request: MerchantRequester }) {
   const [filters, setFilters] = useAnalyticsFilters();
   const query = buildAnalyticsQuery(filters, { liveMinutes: filters.liveMinutes || 15 });
-  const featureGate = useFeatureGate(request, 'advanced_analytics');
   const { data, loading, error, refresh } = useAnalyticsData<AnalyticsLive>(
     request,
     '/analytics/live',
     query,
     30_000,
-    featureGate.isEnabled,
   );
 
   return (
     <AppPage>
       <PageHeader title="التحليلات المباشرة" description="تحليلات فورية لنافذة آخر 15 دقيقة (قابلة للتعديل)." />
-      {featureGate.loading ? (
-        <AnalyticsLoadingState />
-      ) : featureGate.error ? (
-        <Alert severity="error">{featureGate.error}</Alert>
-      ) : featureGate.isLocked ? (
-        <LockedFeaturePage />
-      ) : (
-        <>
       <AnalyticsFiltersBar filters={filters} onChange={setFilters} onRefresh={refresh} includeLiveMinutes />
       {error ? <Alert severity="error">{error}</Alert> : null}
 
@@ -101,8 +90,6 @@ export function AnalyticsLivePanel({ request }: { request: MerchantRequester }) 
           </Box>
         </Stack>
       ) : null}
-        </>
-      )}
     </AppPage>
   );
 }

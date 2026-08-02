@@ -5,7 +5,6 @@ const publicPages = ['/', '/login'];
 const merchantTabs = [
   { name: 'products', label: /المنتجات|Products/i },
   { name: 'orders', label: /الطلبات|Orders/i },
-  { name: 'themes', label: /التصميم|القوالب|Themes|Templates/i },
   { name: 'store', label: /إعدادات المتجر|Store settings/i },
 ];
 
@@ -21,7 +20,6 @@ const testSession = {
     role: 'owner',
     permissions: ['*'],
     sessionId: 'a11y-session',
-    onboardingCompleted: true,
   },
 };
 
@@ -39,12 +37,6 @@ async function installMerchantSession(page) {
         id: testSession.user.storeId,
         name: 'A11y Test Store',
         slug: 'a11y-test-store',
-        logoMediaAssetId: null,
-        logoUrl: null,
-        faviconMediaAssetId: null,
-        faviconUrl: null,
-        businessCategory: null,
-        onboardingCompleted: true,
         phone: null,
         address: null,
         country: 'SA',
@@ -56,11 +48,6 @@ async function installMerchantSession(page) {
         socialLinks: {},
         currencyCode: 'SAR',
         timezone: 'Asia/Riyadh',
-        shippingPolicy: null,
-        returnPolicy: null,
-        privacyPolicy: null,
-        termsAndConditions: null,
-        loyaltyPolicy: null,
       }),
     }),
   );

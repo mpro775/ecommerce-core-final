@@ -141,8 +141,8 @@ export class ShippingRepository {
     return result.rows[0] ?? null;
   }
 
-  async findActiveById(storeId: string, zoneId: string): Promise<ShippingZoneRecord | null> {
-    const result = await this.databaseService.db.query<ShippingZoneRecord>(
+  async findActiveById(storeId: string, zoneId: string, db?: Queryable): Promise<ShippingZoneRecord | null> {
+    const result = await (db??this.databaseService.db).query<ShippingZoneRecord>(
       `
         SELECT id, store_id, name, city, area, description, fee, is_active
         FROM shipping_zones
@@ -150,6 +150,7 @@ export class ShippingRepository {
           AND id = $2
           AND is_active = TRUE
         LIMIT 1
+        ${db ? 'FOR SHARE' : ''}
       `,
       [storeId, zoneId],
     );
@@ -210,8 +211,10 @@ export class ShippingRepository {
     storeId: string,
     zoneId: string,
     onlyActive = false,
+    db?: Queryable,
   ): Promise<Array<ShippingMethodRecord & { ranges: ShippingMethodRangeRecord[] }>> {
-    const methodsResult = await this.databaseService.db.query<ShippingMethodRecord>(
+    const queryable = db ?? this.databaseService.db;
+    const methodsResult = await queryable.query<ShippingMethodRecord>(
       `
         SELECT id, store_id, shipping_zone_id, method_type, display_name, description, is_active, sort_order,
                min_delivery_days, max_delivery_days, config
@@ -220,6 +223,7 @@ export class ShippingRepository {
           AND shipping_zone_id = $2
           AND ($3::boolean = FALSE OR is_active = TRUE)
         ORDER BY sort_order ASC, created_at ASC
+        ${db ? 'FOR SHARE' : ''}
       `,
       [storeId, zoneId, onlyActive],
     );
@@ -230,13 +234,14 @@ export class ShippingRepository {
     }
 
     const methodIds = methods.map((method) => method.id);
-    const rangesResult = await this.databaseService.db.query<ShippingMethodRangeRecord>(
+    const rangesResult = await queryable.query<ShippingMethodRangeRecord>(
       `
         SELECT id, store_id, shipping_method_id, range_min, range_max, cost, sort_order
         FROM shipping_method_ranges
         WHERE store_id = $1
           AND shipping_method_id = ANY($2::uuid[])
         ORDER BY sort_order ASC, range_min ASC, created_at ASC
+        ${db ? 'FOR SHARE' : ''}
       `,
       [storeId, methodIds],
     );
@@ -487,8 +492,10 @@ export class ShippingRepository {
 
   async listActiveMethodsAcrossZones(
     storeId: string,
+    db?: Queryable,
   ): Promise<Array<ShippingMethodRecord & { ranges: ShippingMethodRangeRecord[] }>> {
-    const methodsResult = await this.databaseService.db.query<ShippingMethodRecord>(
+    const queryable=db??this.databaseService.db;
+    const methodsResult = await queryable.query<ShippingMethodRecord>(
       `
         SELECT sm.id, sm.store_id, sm.shipping_zone_id, sm.method_type, sm.display_name,
                sm.description, sm.is_active, sm.sort_order, sm.min_delivery_days,
@@ -501,6 +508,7 @@ export class ShippingRepository {
           AND sm.is_active = TRUE
           AND sz.is_active = TRUE
         ORDER BY sm.sort_order ASC, sm.created_at ASC
+        ${db ? 'FOR SHARE OF sm, sz' : ''}
       `,
       [storeId],
     );
@@ -511,13 +519,14 @@ export class ShippingRepository {
     }
 
     const methodIds = methods.map((method) => method.id);
-    const rangesResult = await this.databaseService.db.query<ShippingMethodRangeRecord>(
+    const rangesResult = await queryable.query<ShippingMethodRangeRecord>(
       `
         SELECT id, store_id, shipping_method_id, range_min, range_max, cost, sort_order
         FROM shipping_method_ranges
         WHERE store_id = $1
           AND shipping_method_id = ANY($2::uuid[])
         ORDER BY sort_order ASC, range_min ASC, created_at ASC
+        ${db ? 'FOR SHARE' : ''}
       `,
       [storeId, methodIds],
     );

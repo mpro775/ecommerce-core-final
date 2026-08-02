@@ -5,11 +5,14 @@ const { canTransitionOrderStatus } = require('../dist/orders/constants/order-sta
 const { AnalyticsRepository } = require('../dist/analytics/analytics.repository');
 
 describe('Phase 3 launch closure rules', () => {
-  it('allows the simple Yemen order status transitions', () => {
-    assert.equal(canTransitionOrderStatus('preparing', 'completed'), true);
-    assert.equal(canTransitionOrderStatus('out_for_delivery', 'cancelled'), true);
-    assert.equal(canTransitionOrderStatus('completed', 'returned'), true);
+  it('enforces the canonical commercial order state machine', () => {
+    assert.equal(canTransitionOrderStatus('new', 'confirmed'), true);
+    assert.equal(canTransitionOrderStatus('new', 'cancelled'), true);
+    assert.equal(canTransitionOrderStatus('confirmed', 'completed'), true);
+    assert.equal(canTransitionOrderStatus('confirmed', 'cancelled'), true);
     assert.equal(canTransitionOrderStatus('completed', 'cancelled'), false);
+    assert.equal(canTransitionOrderStatus('cancelled', 'confirmed'), false);
+    assert.equal(canTransitionOrderStatus('preparing', 'completed'), false);
   });
 
   it('builds delivery analytics from orders instead of shipment lifecycle tables', async () => {

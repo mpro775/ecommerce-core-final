@@ -1,8 +1,7 @@
 import { Transform } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { ORDER_STATUSES } from '../constants/order-status.constants';
-
-const PAYMENT_STATUSES = ['pending', 'under_review', 'approved', 'rejected', 'refunded'] as const;
+import { PAYMENT_STATUSES } from '../../payments/constants/payment.constants';
 
 export class ListOrdersQueryDto {
   @IsOptional()

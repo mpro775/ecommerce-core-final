@@ -1,6 +1,6 @@
 # General Ecommerce API
 
-Backend API for the General Ecommerce Platform.
+Backend API for General Ecommerce.
 
 ## Tech Stack
 
@@ -42,6 +42,9 @@ npm run dev
 
 ```bash
 npm run worker:outbox            # Outbox event publisher
+npm run worker:inventory-reservations # Expire abandoned stock reservations
+npm run worker:loyalty-earn      # Activate earned points after the hold period
+npm run worker:affiliate-commissions # Advance approved commissions after returns close
 npm run worker:notifications     # Notification consumer
 npm run worker:abandoned-carts   # Abandoned cart recovery
 ```

@@ -8,24 +8,14 @@ import {
   PeopleIcon,
   SettingsIcon,
   ShoppingCartIcon,
-  StorefrontIcon,
 } from '../../../components/icons';
-import type { MerchantNavItem, MerchantTabKey } from '../merchant-dashboard.types';
 import { ADMIN_TOKENS } from '../../../theme/tokens';
+import type { MerchantNavItem, MerchantTabKey } from '../merchant-dashboard.types';
 
 export const MERCHANT_DRAWER_WIDTH = ADMIN_TOKENS.layout.sidebarWidth;
 
 export const MERCHANT_NAV_ITEMS: MerchantNavItem[] = [
-  {
-    key: 'overview',
-    label: 'الرئيسية',
-    icon: <DashboardIcon />,
-  },
-  {
-    key: 'setup',
-    label: 'التهيئة',
-    icon: <SettingsIcon />,
-  },
+  { key: 'overview', label: 'الرئيسية', icon: <DashboardIcon /> },
   {
     key: 'group_products_inventory',
     label: 'المنتجات والمخزون',
@@ -75,14 +65,6 @@ export const MERCHANT_NAV_ITEMS: MerchantNavItem[] = [
     ],
   },
   {
-    key: 'group_storefront',
-    label: 'واجهة المتجر',
-    icon: <StorefrontIcon />,
-    children: [
-      { key: 'storePages', label: 'Store Pages', icon: <DescriptionIcon /> },
-    ],
-  },
-  {
     key: 'group_analytics',
     label: 'التحليلات',
     icon: <AnalyticsIcon />,
@@ -122,7 +104,6 @@ export const MERCHANT_NAV_ITEMS: MerchantNavItem[] = [
 
 export const MERCHANT_PRIMARY_MOBILE_TABS: MerchantTabKey[] = [
   'overview',
-  'setup',
   'orders',
   'products',
 ];

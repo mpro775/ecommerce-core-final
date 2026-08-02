@@ -66,7 +66,6 @@ export class AccessTokenGuard implements CanActivate {
       role: payload.role,
       permissions: payload.permissions,
       sessionId: payload.sid,
-      onboardingCompleted: false,
     };
   }
 }

@@ -2,15 +2,10 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const test = require('node:test');
 
-test('store resolver prefers explicit store slug before host cache', () => {
+test('store resolver always resolves the single default active store', () => {
   const source = readFileSync('src/storefront/store-resolver.service.ts', 'utf8');
 
-  assert.match(source, /getAllowedExplicitSlugFromRequest\(request, hostname\)/);
-  assert.match(source, /query\.store/);
-  assert.match(source, /header\('x-store-slug'\)/);
-  assert.match(source, /cacheKeyForSlug\(explicitSlug\)/);
-  assert.match(
-    source,
-    /shouldTryCustomDomain\s*\?\s*await this\.storesRepository\.findPublicByHostname/,
-  );
+  assert.match(source, /store:default_active/);
+  assert.match(source, /findFirstActiveStore\(\)/);
+  assert.doesNotMatch(source, /x-store-slug|findPublicByHostname|query\.store|subdomain/i);
 });

@@ -1,26 +1,35 @@
 INSERT INTO stores (
   id,
   name,
+  name_ar,
+  name_en,
   slug,
   phone,
   address,
+  country,
   currency_code,
   timezone,
   metadata
 )
 VALUES (
   '00000000-0000-4000-8000-000000000100',
-  'General Ecommerce Store',
-  'store',
+  'متجر النجوم تليكوم',
+  'متجر النجوم تليكوم',
+  'Nojoom Telecom',
+  'nojoom-telecom',
   NULL,
   NULL,
+  'اليمن',
   'YER',
   'Asia/Aden',
   '{"seeded": true, "singleStoreCore": true}'::jsonb
 )
 ON CONFLICT (id) DO UPDATE
 SET name = EXCLUDED.name,
+    name_ar = EXCLUDED.name_ar,
+    name_en = EXCLUDED.name_en,
     slug = EXCLUDED.slug,
+    country = EXCLUDED.country,
     currency_code = EXCLUDED.currency_code,
     timezone = EXCLUDED.timezone,
     metadata = stores.metadata || EXCLUDED.metadata,
@@ -40,10 +49,10 @@ INSERT INTO store_users (
 VALUES (
   '00000000-0000-4000-8000-000000000101',
   '00000000-0000-4000-8000-000000000100',
-  'owner@example.com',
+  'owner@nojoom.local',
   '$argon2id$v=19$m=65536,t=3,p=4$avBM/ut/6bvMV7g46h0QuQ$ygmBIdxHtarXcOrWNK3R0vW0Ov1J5wvNPLfCMUbtewM',
   NULL,
-  'Store Owner',
+  'Nojoom Telecom Owner',
   'owner',
   '["*"]'::jsonb,
   TRUE
@@ -60,8 +69,6 @@ SET store_id = EXCLUDED.store_id,
 
 INSERT INTO store_general_settings (
   store_id,
-  profile_settings,
-  currency_settings,
   order_settings,
   inventory_settings,
   tax_settings,
@@ -69,22 +76,6 @@ INSERT INTO store_general_settings (
 )
 VALUES (
   '00000000-0000-4000-8000-000000000100',
-  '{
-    "iconUrl": null,
-    "primaryColor": "#111827",
-    "secondaryColor": "#F59E0B",
-    "supportPhone": null,
-    "supportEmail": null,
-    "whatsapp": null,
-    "defaultLanguage": "ar",
-    "supportedLanguages": ["ar", "en"]
-  }'::jsonb,
-  '{
-    "symbolPosition": "after",
-    "pricingMode": "exchange_rate",
-    "fixedPrices": {},
-    "exchangeRates": {}
-  }'::jsonb,
   '{
     "minimumOrderValue": 0,
     "allowGuestCheckout": true,
@@ -94,7 +85,7 @@ VALUES (
     "returnWindowDays": 7,
     "confirmationMode": "manual",
     "stockDeductionTiming": "confirmation",
-    "orderNumberPrefix": "ORD"
+    "orderNumberPrefix": "NJM"
   }'::jsonb,
   '{
     "allowOutOfStockSales": false,
@@ -120,40 +111,11 @@ VALUES (
     "minimumIosVersion": null,
     "forceUpdate": false,
     "maintenanceMode": false,
-    "maintenanceMessage": null,
-    "storeLinks": {},
-    "socialLinks": {},
-    "enabledFeatures": {
-      "loyalty": true,
-      "loyalty_program": true,
-      "affiliates": false,
-      "affiliate_program": false,
-      "advancedOffers": true,
-      "advanced_offers": true,
-      "multiWarehouse": true,
-      "multi_warehouse": true,
-      "reviews": true,
-      "productQuestions": true,
-      "product_questions": true,
-      "abandonedCarts": true,
-      "abandoned_carts": true,
-      "digitalProducts": false,
-      "digital_products": false,
-      "staff_management": true,
-      "webhooks_access": true
-    },
-    "showRegistration": true,
-    "showOtp": true,
-    "showWallet": false,
-    "showLoyalty": true,
-    "showAffiliates": false,
-    "showReviews": true
+    "maintenanceMessage": null
   }'::jsonb
 )
 ON CONFLICT (store_id) DO UPDATE
-SET profile_settings = EXCLUDED.profile_settings,
-    currency_settings = EXCLUDED.currency_settings,
-    order_settings = EXCLUDED.order_settings,
+SET order_settings = EXCLUDED.order_settings,
     inventory_settings = EXCLUDED.inventory_settings,
     tax_settings = EXCLUDED.tax_settings,
     mobile_app_config = EXCLUDED.mobile_app_config,
@@ -169,11 +131,12 @@ INSERT INTO store_payment_methods (
 SELECT
   gen_random_uuid(),
   '00000000-0000-4000-8000-000000000100',
-  ppm.id,
+  catalog.id,
   TRUE,
-  ppm.sort_order
-FROM payment_method_catalog ppm
-WHERE ppm.code = 'cod'
+  catalog.sort_order
+FROM payment_method_catalog catalog
+WHERE catalog.code = 'cod'
+  AND catalog.is_enabled = TRUE
 ON CONFLICT (store_id, payment_method_catalog_id) DO UPDATE
 SET is_enabled = TRUE,
     sort_order = EXCLUDED.sort_order,

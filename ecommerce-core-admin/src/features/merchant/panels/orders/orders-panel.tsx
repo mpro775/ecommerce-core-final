@@ -40,14 +40,11 @@ import type {
 } from '../../types';
 import { AppPage, DataTableWrapper, FilterBar, PageHeader } from '../../components/ui';
 import {
-  initialStatusCounts,
   manualSteps,
   paymentMethodOptions,
-  paymentStatusOptions,
   statusColor,
-  statusLabel,
-  statusOptions,
 } from './constants';
+import { formatCommercialDate, formatCommercialMoney, newIdempotencyKey } from '../../../../lib/commercial-format';
 
 interface OrdersPanelProps {
   request: MerchantRequester;
@@ -76,16 +73,13 @@ interface CustomerLite {
 export function OrdersPanel({ request }: OrdersPanelProps) {
   const [mode, setMode] = useState<OrdersMode>('list');
   const [ordersData, setOrdersData] = useState<PaginatedOrders>({
-    items: [],
-    total: 0,
-    page: 1,
-    limit: 30,
-    statusCounts: initialStatusCounts,
+    data: [],
+    meta: { page: 1, limit: 30, total: 0, totalPages: 0 },
+    summary: { statusCounts: {} },
   });
   const [selectedOrder, setSelectedOrder] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [inlineStatusLoadingId, setInlineStatusLoadingId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' }>({
     text: '',
     type: 'info',
@@ -146,6 +140,9 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
     () => Math.max(manualSubtotal - manualLineDiscountTotal, 0),
     [manualLineDiscountTotal, manualSubtotal],
   );
+  const visibleOrderStatuses = Object.keys(ordersData.summary.statusCounts) as OrderStatus[];
+  const visiblePaymentStatuses = [...new Set(ordersData.data.flatMap((order) =>
+    order.paymentSummary.status ? [order.paymentSummary.status] : []))];
 
   async function loadOrders(): Promise<void> {
     setLoading(true);
@@ -177,11 +174,9 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
       });
       setOrdersData(
         data ?? {
-          items: [],
-          total: 0,
-          page: 1,
-          limit: 30,
-          statusCounts: initialStatusCounts,
+          data: [],
+          meta: { page: 1, limit: 30, total: 0, totalPages: 0 },
+          summary: { statusCounts: {} },
         },
       );
     } catch (error) {
@@ -214,50 +209,57 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
     }
   }
 
-  async function updateOrderStatusInline(orderId: string, nextStatus: OrderStatus): Promise<void> {
-    setInlineStatusLoadingId(orderId);
+  async function executeOrderCommand(command: string, requiresReason: boolean): Promise<void> {
+    if (!selectedOrder) return;
+    const reason = requiresReason ? window.prompt('سبب الإجراء')?.trim() : undefined;
+    if (requiresReason && !reason) return;
+    const route: Record<string, string> = { confirmOrder: 'confirm', cancelOrder: 'cancel', completeOrder: 'complete' };
+    const suffix = route[command];
+    if (!suffix) return;
     try {
-      await request(`/orders/${orderId}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: nextStatus }),
-      });
+      await request(`/orders/${selectedOrder.id}/${suffix}`, { method: 'POST',
+        headers: { 'Idempotency-Key': newIdempotencyKey(`order-${command}`) },
+        body: JSON.stringify({ reason, expectedVersion: selectedOrder.version }) });
       await loadOrders();
-      if (selectedOrder?.id === orderId) {
-        await openOrderDetail(orderId);
-      }
-      setMessage({ text: 'تم تحديث حالة الطلب', type: 'success' });
+      await openOrderDetail(selectedOrder.id);
+      setMessage({ text: 'تم تنفيذ أمر الطلب', type: 'success' });
     } catch (error) {
-      setMessage({
-        text: error instanceof Error ? error.message : 'فشل تحديث حالة الطلب',
-        type: 'error',
-      });
-    } finally {
-      setInlineStatusLoadingId(null);
+      setMessage({ text: error instanceof Error ? error.message : 'فشل تنفيذ أمر الطلب', type: 'error' });
     }
   }
 
-  async function updateSelectedPayment(status: 'approved' | 'rejected' | 'collected'): Promise<void> {
+  async function executePaymentCommand(command: string, requiresReason: boolean): Promise<void> {
     if (!selectedOrder?.payment) return;
+    const reason = requiresReason ? window.prompt('سبب الإجراء')?.trim() : undefined;
+    if (requiresReason && !reason) return;
+    const routes: Record<string, string> = { startPaymentReview: 'start-review', approvePayment: 'approve',
+      rejectPayment: 'reject', collectCodPayment: 'collect-cod', expirePayment: 'expire',
+      cancelPayment: 'cancel', submitPaymentProof: 'submit-proof', resubmitPaymentProof: 'resubmit-proof' };
+    const suffix = routes[command];
+    if (!suffix) return;
     try {
-      if (status === 'collected') {
-        await request(`/payments/${selectedOrder.payment.id}/mark-collected`, { method: 'PATCH' });
-      } else {
-        await request(`/payments/${selectedOrder.payment.id}/status`, {
-          method: 'PATCH',
-          body: JSON.stringify({
-            status,
-            ...(status === 'rejected' ? { reviewNote: 'تم رفض الدفع من تفاصيل الطلب' } : {}),
-          }),
-        });
-      }
+      await request(`/payments/${selectedOrder.payment.id}/${suffix}`, { method: 'POST',
+        headers: { 'Idempotency-Key': newIdempotencyKey(`payment-${command}`) },
+        body: JSON.stringify({ reason }) });
       await openOrderDetail(selectedOrder.id);
-      setMessage({ text: 'تم تحديث حالة الدفع', type: 'success' });
+      setMessage({ text: 'تم تنفيذ أمر الدفع', type: 'success' });
     } catch (error) {
-      setMessage({
-        text: error instanceof Error ? error.message : 'تعذر تحديث حالة الدفع',
-        type: 'error',
-      });
+      setMessage({ text: error instanceof Error ? error.message : 'تعذر تنفيذ أمر الدفع', type: 'error' });
     }
+  }
+
+  async function executeFulfillmentCommand(command: string, requiresReason: boolean): Promise<void> {
+    if (!selectedOrder) return;
+    const reason = requiresReason ? window.prompt('سبب الإجراء')?.trim() : undefined;
+    if (requiresReason && !reason) return;
+    const routes: Record<string,string>={startPreparing:'start-preparing',overrideStartPreparing:'start-preparing-with-payment-override',
+      markReady:'mark-ready',dispatch:'dispatch',markFulfilled:'mark-fulfilled',markFailed:'mark-failed',
+      retryDispatch:'retry',cancelFulfillment:'cancel'};
+    const suffix=routes[command]; if(!suffix)return;
+    await request(`/orders/${selectedOrder.id}/fulfillment/${suffix}`,{method:'POST',
+      headers:{'Idempotency-Key':newIdempotencyKey(`fulfillment-${command}`)},
+      body:JSON.stringify({reason,expectedVersion:selectedOrder.version})});
+    await openOrderDetail(selectedOrder.id);
   }
 
   async function exportExcel(): Promise<void> {
@@ -369,7 +371,7 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
         `/orders/manual/products?${params.toString()}`,
         { method: 'GET' },
       );
-      setManualProducts(data?.items ?? []);
+      setManualProducts(data?.data ?? []);
     } catch {
       setManualProducts([]);
     } finally {
@@ -461,14 +463,18 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
     try {
       const payload: Record<string, unknown> = {
         customerId: manualCustomer.id,
-        paymentالطريقة: manualPaymentMethod,
+        paymentMethod: manualPaymentMethod,
         lines: manualLines.map((line) => ({
           variantId: line.variantId,
           quantity: line.quantity,
-          unitPriceOverride: line.unitPrice,
-          lineDiscount: line.lineDiscount,
+          ...(line.lineDiscount > 0 ? { lineDiscount: line.lineDiscount } : {}),
         })),
       };
+      if (manualLines.some((line) => line.lineDiscount > 0)) {
+        const reason = window.prompt('سبب الخصم اليدوي')?.trim();
+        if (!reason) return;
+        payload.priceOverrideReason = reason;
+      }
 
       if (manualAddressId) {
         payload.customerAddressId = manualAddressId;
@@ -483,6 +489,7 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
       if (mode === 'create-manual') {
         const created = await request<OrderDetail>('/orders/manual', {
           method: 'POST',
+          headers: { 'Idempotency-Key': newIdempotencyKey('manual-create') },
           body: JSON.stringify(payload),
         });
         if (created) {
@@ -492,9 +499,10 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
           setMode('list');
         }
       } else if (mode === 'edit-manual' && selectedOrder) {
-        const updated = await request<OrderDetail>(`/orders/${selectedOrder.id}/manual`, {
-          method: 'PATCH',
-          body: JSON.stringify(payload),
+        const updated = await request<OrderDetail>(`/orders/${selectedOrder.id}/manual/edit`, {
+          method: 'POST',
+          headers: { 'Idempotency-Key': newIdempotencyKey('manual-edit') },
+          body: JSON.stringify({ ...payload, expectedVersion: selectedOrder.version }),
         });
         if (updated) {
           setSelectedOrder(updated);
@@ -548,9 +556,9 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
         productId: item.productId,
         title: item.title,
         sku: item.sku,
-        unitPrice: item.unitPrice,
+        unitPrice: Number(item.unitPrice),
         quantity: item.quantity,
-        lineDiscount: Math.max(item.unitPrice * item.quantity - item.lineTotal, 0),
+        lineDiscount: Math.max(Number(item.lineSubtotal) - Number(item.lineTotal), 0),
         availableQuantity: item.quantity,
         stockUnlimited: true,
       })),
@@ -570,9 +578,7 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
 
   const canEditCurrentOrder =
     selectedOrder &&
-    (selectedOrder.status === 'new' ||
-      selectedOrder.status === 'confirmed' ||
-      selectedOrder.status === 'preparing');
+    selectedOrder.status === 'new' && selectedOrder.fulfillment.status === 'unfulfilled';
 
   if (mode === 'detail' || detailLoading) {
     return (
@@ -605,23 +611,60 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
               >
                 <Box>
                   <Typography variant="h5" fontWeight={800}>
-                    Order {selectedOrder.orderCode}
+                    Order {selectedOrder.orderNumber}
                   </Typography>
                   <Typography color="text.secondary">
-                    تاريخ الإنشاء {new Date(selectedOrder.createdAt).toLocaleString()}
+                    تاريخ الإنشاء {formatCommercialDate(selectedOrder.createdAt)}
                   </Typography>
                 </Box>
                 <Stack direction="row" spacing={1}>
                   <Chip
-                    label={statusLabel[selectedOrder.status]}
-                    color={statusColor[selectedOrder.status]}
+                    label={selectedOrder.statusLabel}
+                    color={statusColor(selectedOrder.status)}
                   />
                   {canEditCurrentOrder ? (
                     <Button variant="outlined" onClick={openEditManual}>
                       Edit order
                     </Button>
                   ) : null}
+                  {selectedOrder.allowedTransitions.order.map((transition) => (
+                    <Button key={transition.command} variant="contained"
+                      onClick={() => executeOrderCommand(transition.command,transition.requiresReason).catch(()=>undefined)}>
+                      {transition.command} → {transition.toStatus}
+                    </Button>
+                  ))}
+                  {selectedOrder.allowedTransitions.fulfillment.map((transition) => (
+                    <Button key={transition.command} variant="outlined"
+                      onClick={() => executeFulfillmentCommand(transition.command,transition.requiresReason).catch((error:unknown)=>
+                        setMessage({text:error instanceof Error?error.message:'تعذر تنفيذ أمر التجهيز',type:'error'}))}>
+                      {transition.command} → {transition.toStatus}
+                    </Button>
+                  ))}
                 </Stack>
+              </Stack>
+            </Paper>
+
+            <Paper elevation={0} sx={{ p: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
+              <Typography variant="h6" fontWeight={700} gutterBottom>الحالة التجارية والتنفيذ</Typography>
+              <Stack spacing={1}>
+                <Typography>حالة الطلب: {selectedOrder.statusLabel}</Typography>
+                <Typography>نوع التنفيذ: {selectedOrder.fulfillment.type}</Typography>
+                <Typography>حالة التنفيذ: {selectedOrder.fulfillment.statusLabel}</Typography>
+                <Typography>آخر تحديث: {formatCommercialDate(selectedOrder.updatedAt)}</Typography>
+              </Stack>
+            </Paper>
+
+            <Paper elevation={0} sx={{ p: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
+              <Typography variant="h6" fontWeight={700} gutterBottom>الإجماليات المالية</Typography>
+              <Stack spacing={1}>
+                <Typography>الإجمالي الفرعي: {formatCommercialMoney(selectedOrder.totals.subtotalAmount,selectedOrder.totals.currency)}</Typography>
+                <Typography>الخصم: {formatCommercialMoney(selectedOrder.totals.discountAmount,selectedOrder.totals.currency)}</Typography>
+                <Typography>الشحن: {formatCommercialMoney(selectedOrder.totals.shippingAmount,selectedOrder.totals.currency)}</Typography>
+                <Typography>الضريبة: {formatCommercialMoney(selectedOrder.totals.taxAmount,selectedOrder.totals.currency)}</Typography>
+                <Typography>الإجمالي: {formatCommercialMoney(selectedOrder.totals.totalAmount,selectedOrder.totals.currency)}</Typography>
+                <Typography>المدفوع: {formatCommercialMoney(selectedOrder.totals.paidAmount,selectedOrder.totals.currency)}</Typography>
+                <Typography>المسترد: {formatCommercialMoney(selectedOrder.totals.refundedAmount,selectedOrder.totals.currency)}</Typography>
+                <Typography>القابل للاسترداد: {formatCommercialMoney(selectedOrder.totals.refundableAmount,selectedOrder.totals.currency)}</Typography>
               </Stack>
             </Paper>
 
@@ -649,8 +692,8 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
                         <TableCell>{item.title}</TableCell>
                         <TableCell>{item.sku}</TableCell>
                         <TableCell align="center">{item.quantity}</TableCell>
-                        <TableCell align="right">{item.unitPrice.toFixed(2)}</TableCell>
-                        <TableCell align="right">{item.lineTotal.toFixed(2)}</TableCell>
+                        <TableCell align="right">{formatCommercialMoney(item.unitPrice,item.currency)}</TableCell>
+                        <TableCell align="right">{formatCommercialMoney(item.lineTotal,item.currency)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -669,7 +712,7 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
                 <Stack spacing={0.75}>
                   <Typography>طريقة الدفع: {selectedOrder.payment.paymentMethodName ?? selectedOrder.payment.paymentMethodCode ?? selectedOrder.payment.method}</Typography>
                   <Typography>حالة الدفع: {selectedOrder.payment.status}</Typography>
-                  <Typography>المبلغ: {selectedOrder.payment.amount.toFixed(2)}</Typography>
+                  <Typography>المبلغ: {formatCommercialMoney(selectedOrder.payment.amount,selectedOrder.payment.currency)}</Typography>
                   <Typography>اسم الحساب المستلم: {selectedOrder.payment.accountName ?? '-'}</Typography>
                   <Typography>رقم الحساب المستلم: {selectedOrder.payment.accountNumber ?? '-'}</Typography>
                   <Typography>رقم الهاتف: {selectedOrder.payment.phoneNumber ?? '-'}</Typography>
@@ -678,7 +721,7 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
                   <Typography>
                     تاريخ إرسال بيانات الدفع:{' '}
                     {selectedOrder.payment.customerSubmittedAt
-                      ? new Date(selectedOrder.payment.customerSubmittedAt).toLocaleString('ar')
+                      ? formatCommercialDate(selectedOrder.payment.customerSubmittedAt)
                       : '-'}
                   </Typography>
                   <Typography>تمت المراجعة بواسطة: {selectedOrder.payment.reviewedBy ?? '-'}</Typography>
@@ -694,26 +737,53 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
                       عرض صورة الإيصال
                     </Button>
                   ) : null}
-                  {selectedOrder.payment.status === 'under_review' ? (
-                    <Stack direction="row" spacing={1}>
-                      <Button color="success" variant="contained" onClick={() => updateSelectedPayment('approved').catch(() => undefined)}>
-                        اعتماد الدفع
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    {selectedOrder.allowedTransitions.payment.map((transition) => (
+                      <Button key={transition.command} variant="contained"
+                        onClick={() => executePaymentCommand(transition.command, transition.requiresReason).catch(() => undefined)}>
+                        {transition.command} → {transition.toStatus}
                       </Button>
-                      <Button color="error" variant="contained" onClick={() => updateSelectedPayment('rejected').catch(() => undefined)}>
-                        رفض الدفع
-                      </Button>
-                    </Stack>
-                  ) : null}
-                  {(selectedOrder.payment.paymentMethodCode ?? selectedOrder.payment.method) === 'cod' &&
-                  selectedOrder.payment.status === 'pending' ? (
-                    <Button color="success" variant="contained" onClick={() => updateSelectedPayment('collected').catch(() => undefined)}>
-                      تم تحصيل المبلغ
-                    </Button>
-                  ) : null}
+                    ))}
+                  </Stack>
                 </Stack>
               ) : (
                 <Typography color="text.secondary">لا توجد بيانات دفع</Typography>
               )}
+            </Paper>
+
+            <Paper elevation={0} sx={{ p: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
+              <Typography variant="h6" fontWeight={700} gutterBottom>حجوزات المخزون</Typography>
+              <Stack spacing={1}>
+                {selectedOrder.inventoryReservations.length === 0 ? <Typography color="text.secondary">لا توجد حجوزات</Typography> :
+                  selectedOrder.inventoryReservations.map((reservation) => <Typography key={reservation.id}>
+                    {reservation.variantId} — {reservation.quantity} — {reservation.status} — {formatCommercialDate(reservation.reservedAt)}
+                  </Typography>)}
+              </Stack>
+            </Paper>
+
+            <Paper elevation={0} sx={{ p: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
+              <Typography variant="h6" fontWeight={700} gutterBottom>سجل الحالات</Typography>
+              <Stack spacing={1.5}>
+                {selectedOrder.timeline.map((entry, index) => <Typography key={`order-${index}`}>
+                  الطلب: {entry.from ?? '—'} → {entry.to} — {formatCommercialDate(entry.createdAt)}
+                </Typography>)}
+                {selectedOrder.fulfillmentHistory.map((entry, index) => <Typography key={`fulfillment-${index}`}>
+                  التنفيذ: {entry.from ?? '—'} → {entry.to} ({entry.command}) — {formatCommercialDate(entry.createdAt)}
+                </Typography>)}
+                {selectedOrder.paymentHistory.map((entry, index) => <Typography key={`payment-${index}`}>
+                  الدفع: {entry.from ?? '—'} → {entry.to} ({entry.command}) — {formatCommercialDate(entry.createdAt)}
+                </Typography>)}
+              </Stack>
+            </Paper>
+
+            <Paper elevation={0} sx={{ p: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
+              <Typography variant="h6" fontWeight={700} gutterBottom>سجل التدقيق</Typography>
+              <Stack spacing={1}>
+                {selectedOrder.auditTimeline.length === 0 ? <Typography color="text.secondary">لا توجد قيود تدقيق</Typography> :
+                  selectedOrder.auditTimeline.map((entry, index) => <Typography key={`audit-${index}`}>
+                    {entry.action} — {entry.actorType} — {formatCommercialDate(entry.createdAt)}
+                  </Typography>)}
+              </Stack>
             </Paper>
           </Stack>
         )}
@@ -1093,11 +1163,11 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
           value={statusTab}
           onChange={(_event, value: 'all' | OrderStatus) => setStatusTab(value)}
         >
-          <Tab label={`All (${ordersData.total})`} value="all" />
-          {statusOptions.map((status) => (
+          <Tab label={`All (${ordersData.meta.total})`} value="all" />
+          {visibleOrderStatuses.map((status) => (
             <Tab
               key={status}
-              label={`${statusLabel[status]} (${ordersData.statusCounts[status] ?? 0})`}
+              label={`${ordersData.data.find((order)=>order.status===status)?.statusLabel??status} (${ordersData.summary.statusCounts[status] ?? 0})`}
               value={status}
             />
           ))}
@@ -1133,7 +1203,7 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
           sx={{ minWidth: 180 }}
         >
           <MenuItem value="">الكل</MenuItem>
-          {paymentStatusOptions.map((status) => (
+          {visiblePaymentStatuses.map((status) => (
             <MenuItem key={status} value={status}>
               {status}
             </MenuItem>
@@ -1182,21 +1252,21 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
                     <CircularProgress />
                   </TableCell>
                 </TableRow>
-              ) : ordersData.items.length === 0 ? (
+              ) : ordersData.data.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} align="center" sx={{ py: 6 }}>
                     <Typography color="text.secondary">لم يتم العثور على طلبات</Typography>
                   </TableCell>
                 </TableRow>
               ) : (
-                ordersData.items.map((order) => (
+                ordersData.data.map((order) => (
                   <TableRow key={order.id} hover>
                     <TableCell>
                       <Button
                         size="small"
                         onClick={() => openOrderDetail(order.id).catch(() => undefined)}
                       >
-                        {order.orderCode}
+                        {order.orderNumber}
                       </Button>
                     </TableCell>
                     <TableCell>
@@ -1205,33 +1275,15 @@ export function OrdersPanel({ request }: OrdersPanelProps) {
                         {order.customer.phone ?? '-'}
                       </Typography>
                     </TableCell>
-                    <TableCell>{order.paymentMethod ?? '-'}</TableCell>
-                    <TableCell>{order.paymentStatus ?? '-'}</TableCell>
+                    <TableCell>{order.paymentSummary.methodName ?? order.paymentSummary.methodCode ?? order.paymentSummary.method ?? '-'}</TableCell>
+                    <TableCell>{order.paymentSummary.status ?? '-'}</TableCell>
                     <TableCell align="right">
-                      {order.total.toFixed(2)} {order.currencyCode}
+                      {formatCommercialMoney(order.totals.totalAmount,order.totals.currency)}
                     </TableCell>
                     <TableCell>
-                      <TextField
-                        select
-                        size="small"
-                        value={order.status}
-                        disabled={inlineStatusLoadingId === order.id}
-                        onChange={(event) =>
-                          updateOrderStatusInline(
-                            order.id,
-                            event.target.value as OrderStatus,
-                          ).catch(() => undefined)
-                        }
-                        sx={{ minWidth: 170 }}
-                      >
-                        {statusOptions.map((status) => (
-                          <MenuItem key={status} value={status}>
-                            {statusLabel[status]}
-                          </MenuItem>
-                        ))}
-                      </TextField>
+                      <Chip label={order.statusLabel} color={statusColor(order.status)} />
                     </TableCell>
-                    <TableCell>{new Date(order.createdAt).toLocaleString()}</TableCell>
+                    <TableCell>{formatCommercialDate(order.createdAt)}</TableCell>
                     <TableCell align="left">
                       <Button
                         size="small"

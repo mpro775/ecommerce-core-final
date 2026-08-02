@@ -42,8 +42,8 @@ interface InventoryVariantOption {
 }
 
 export function InventoryPanel({ request }: InventoryPanelProps) {
-  const [movements, setMovements] = useState<PaginatedInventoryMovements['items']>([]);
-  const [reservations, setReservations] = useState<PaginatedInventoryReservations['items']>([]);
+  const [movements, setMovements] = useState<PaginatedInventoryMovements['data']>([]);
+  const [reservations, setReservations] = useState<PaginatedInventoryReservations['data']>([]);
   const [alerts, setAlerts] = useState<InventoryVariantSnapshot[]>([]);
   const [warehousePriority, setWarehousePriority] = useState<Warehouse[]>([]);
   const [variantOptions, setVariantOptions] = useState<InventoryVariantOption[]>([]);
@@ -85,8 +85,8 @@ export function InventoryPanel({ request }: InventoryPanelProps) {
       });
 
       setAlerts(alertsData ?? []);
-      setMovements(movementsData?.items ?? []);
-      setReservations(reservationsData?.items ?? []);
+      setMovements(movementsData?.data ?? []);
+      setReservations(reservationsData?.data ?? []);
       setWarehousePriority(warehousesData ?? []);
       setVariantOptions(
         (productData?.items ?? []).flatMap((product) =>

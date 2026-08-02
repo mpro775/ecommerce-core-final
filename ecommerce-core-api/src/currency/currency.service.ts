@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from '../database/database.service';
+import type { QueryExecutor } from '../database/query-executor';
 import { STORE_CURRENCY_CODES } from '../stores/constants/store-settings.constants';
 
 export interface StoreCurrencyRecord {
@@ -136,6 +137,30 @@ export class CurrencyService {
     return this.toResolvedCurrency(requested ?? fallback);
   }
 
+  async resolveStoreCurrencyInTransaction(
+    db: QueryExecutor,
+    storeId: string,
+    requestedCurrencyCode?: string | null,
+  ): Promise<ResolvedCurrency> {
+    const result = await db.query<StoreCurrencyRecord>(
+      `SELECT id, store_id, currency_code, yer_per_unit, decimal_digits,
+              rounding_increment, is_default, is_active
+       FROM store_currencies
+       WHERE store_id = $1 AND is_active = TRUE
+       ORDER BY is_default DESC, currency_code ASC
+       FOR SHARE`,
+      [storeId],
+    );
+    const currencies = result.rows.map((row) => this.toCurrencyResponse(row));
+    const requestedCode = requestedCurrencyCode?.trim().toUpperCase();
+    const selected =
+      currencies.find((currency) => currency.currencyCode === requestedCode) ??
+      currencies.find((currency) => currency.isDefault) ??
+      currencies.find((currency) => currency.currencyCode === 'YER') ??
+      this.buildBaseCurrency();
+    return this.toResolvedCurrency(selected);
+  }
+
   async listVariantOverrides(
     storeId: string,
     variantIds: string[],
@@ -164,6 +189,33 @@ export class CurrencyService {
         compareAtPrice: row.compare_at_price === null ? null : Number(row.compare_at_price),
       });
       grouped.set(row.variant_id, rows);
+    }
+    return grouped;
+  }
+
+  async listVariantOverridesInTransaction(
+    db: QueryExecutor,
+    storeId: string,
+    variantIds: string[],
+  ): Promise<Map<string, VariantCurrencyOverride[]>> {
+    if (variantIds.length === 0) return new Map();
+    const result = await db.query<VariantCurrencyPriceRecord>(
+      `SELECT variant_id, currency_code, price, compare_at_price
+       FROM product_variant_currency_prices
+       WHERE store_id = $1 AND variant_id = ANY($2::uuid[])
+       ORDER BY currency_code ASC
+       FOR SHARE`,
+      [storeId, variantIds],
+    );
+    const grouped = new Map<string, VariantCurrencyOverride[]>();
+    for (const row of result.rows) {
+      const values = grouped.get(row.variant_id) ?? [];
+      values.push({
+        currencyCode: row.currency_code,
+        price: Number(row.price),
+        compareAtPrice: row.compare_at_price === null ? null : Number(row.compare_at_price),
+      });
+      grouped.set(row.variant_id, values);
     }
     return grouped;
   }

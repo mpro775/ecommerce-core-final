@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
+  IsArray,
   IsDateString,
   IsIn,
   IsInt,
@@ -51,4 +52,39 @@ export class CreateCouponDto {
   @IsOptional()
   @IsBoolean()
   isFreeShipping?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  perCustomerLimit?: number;
+
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  maximumDiscount?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(3)
+  currencyCode?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  includedProductIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  excludedProductIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  includedCategoryIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  excludedCategoryIds?: string[];
 }

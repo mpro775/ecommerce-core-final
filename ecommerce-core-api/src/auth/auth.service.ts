@@ -159,7 +159,6 @@ export class AuthService {
       full_name: string;
       role: StoreRole;
       permissions: string[];
-      store_onboarding_completed_at: Date | null;
     },
     sessionId: string,
   ): AuthUser {
@@ -171,7 +170,6 @@ export class AuthService {
       role: user.role,
       permissions: user.permissions,
       sessionId,
-      onboardingCompleted: Boolean(user.store_onboarding_completed_at),
     };
   }
 

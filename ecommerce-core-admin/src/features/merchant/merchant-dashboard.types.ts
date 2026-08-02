@@ -4,7 +4,6 @@ import type { MerchantSession, StoreSettings } from './types';
 
 export type MerchantTabKey =
   | 'overview'
-  | 'setup'
   | 'analyticsGeneral'
   | 'analyticsLive'
   | 'analyticsProducts'
@@ -16,7 +15,6 @@ export type MerchantTabKey =
   | 'reportsSales'
   | 'reportsInventory'
   | 'store'
-  | 'storePages'
   | 'products'
   | 'inventory'
   | 'warehouses'
